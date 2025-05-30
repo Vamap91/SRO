@@ -77,13 +77,11 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Inicialização da chave da API OpenAI
+# Inicialização da chave da API OpenAI diretamente dos secrets
 try:
     openai.api_key = st.secrets["openai"]["api_key"]
-    st.session_state['openai_api_key'] = openai.api_key
-except:
-    st.error("Erro ao carregar a chave da API OpenAI. Verifique as configurações do Streamlit.")
-    st.session_state['openai_api_key'] = ""
+except Exception as e:
+    st.error(f"Erro ao carregar a chave da API OpenAI. Verifique as configurações do Streamlit.")
 
 # Sidebar para configurações
 with st.sidebar:
@@ -260,9 +258,6 @@ def find_similar_comments(query_embedding, index, df, embeddings_array, k=5):
 
 # Função para analisar comentário com GPT-4
 def analisar_comentario_openai(comentario, similar_comments, model="gpt-4"):
-    if not st.session_state['openai_api_key']:
-        return "Chave da API OpenAI não configurada"
-    
     try:
         # Construir o prompt com os exemplos históricos
         exemplos_historicos = ""
@@ -504,8 +499,9 @@ def main():
             
             # Botão para iniciar análise
             if st.button("🔍 Analisar Comentários"):
-                if not st.session_state['openai_api_key']:
-                    st.error("❌ Configure a chave da API OpenAI para continuar.")
+                # Verificar se a API OpenAI está configurada
+                if not openai.api_key:
+                    st.error("❌ Chave da API OpenAI não configurada. Verifique as configurações do Streamlit.")
                     st.stop()
                 
                 # Adicionar coluna para resultados
