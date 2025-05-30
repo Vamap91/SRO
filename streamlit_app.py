@@ -66,9 +66,18 @@ uploaded_file = st.file_uploader("Envie um arquivo Excel, PDF ou JSON com os ate
 
 if uploaded_file:
     if uploaded_file.name.endswith(".xlsx"):
-        df = pd.read_excel(uploaded_file)
-        coluna = st.selectbox("Selecione a coluna com os comentários:", df.columns)
-        df = df[[coluna]].rename(columns={coluna: "Comentario"})
+        try:
+            df = pd.read_excel(uploaded_file)
+            if df.empty or df.shape[1] == 1 and df.columns[0].startswith("Unnamed"):
+                uploaded_file.seek(0)
+                df = pd.read_excel(uploaded_file, header=None)
+                df.columns = ["Comentario"]
+            else:
+                coluna = st.selectbox("Selecione a coluna com os comentários:", df.columns)
+                df = df[[coluna]].rename(columns={coluna: "Comentario"})
+        except Exception as e:
+            st.error(f"Erro ao ler o arquivo Excel: {e}")
+            st.stop()
 
     elif uploaded_file.name.endswith(".pdf"):
         df = extract_text_from_pdf(uploaded_file)
