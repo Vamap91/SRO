@@ -62,19 +62,38 @@ def analisar_comentario_openai(comentario):
     except Exception as e:
         return f"Erro na análise: {str(e)}"
 
-# Geração de PDF limpo
+# Geração de PDF visual com ícones
 def gerar_pdf(df):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
+    risco_icon = {
+        "Baixa": "🟢",
+        "Média": "🟡",
+        "Alta": "🟠",
+        "Crítica": "🔴"
+    }
+
     for idx, row in df.iterrows():
         resultado = row["Resultado IA"]
+
+        risco = ""
+        for nivel in risco_icon:
+            if f"Probabilidade de Reclamação: {nivel}" in resultado:
+                risco = risco_icon[nivel] + " " + nivel
+                break
+
+        pdf.set_font("Arial", 'B', 11)
+        pdf.cell(0, 10, f"Comentário {idx + 1} - Risco: {risco}", ln=True)
         pdf.set_font("Arial", '', 11)
-        pdf.multi_cell(0, 10, f"{resultado}")
-        pdf.ln(5)
+        linhas = resultado.split("\n")
+        for linha in linhas:
+            if not linha.startswith("- Pedido"):
+                pdf.multi_cell(0, 8, linha.strip())
+        pdf.ln(4)
         pdf.cell(190, 0, '', ln=True, border='T')
-        pdf.ln(5)
+        pdf.ln(6)
 
     pdf_output = pdf.output(dest='S').encode('latin1')
     buffer = BytesIO()
@@ -89,25 +108,27 @@ if uploaded_file:
     if uploaded_file.name.endswith(".xlsx"):
         try:
             df = pd.read_excel(uploaded_file)
-            if df.empty or df.shape[1] == 1 and df.columns[0].startswith("Unnamed"):
-                uploaded_file.seek(0)
-                df = pd.read_excel(uploaded_file, header=None)
-                df = df.iloc[:, [0]]
-                df.columns = ["Comentario"]
+            colunas = st.multiselect("Selecione as colunas:", df.columns, default=df.columns[:2])
+            if len(colunas) >= 2:
+                df = df[colunas[:2]]
+                df.columns = ["Pedido", "Comentario"]
+                df = df.groupby("Pedido")["Comentario"].apply(lambda x: '\n'.join(x)).reset_index()
             else:
-                coluna = st.selectbox("Selecione a coluna com os comentários:", df.columns)
-                df = df[[coluna]].rename(columns={coluna: "Comentario"})
+                st.error("Selecione pelo menos duas colunas: número do pedido e comentários.")
+                st.stop()
         except Exception as e:
             st.error(f"Erro ao ler o arquivo Excel: {e}")
             st.stop()
 
     elif uploaded_file.name.endswith(".pdf"):
         df = extract_text_from_pdf(uploaded_file)
+        df.insert(0, "Pedido", [f"PDF-{i}" for i in range(len(df))])
 
     elif uploaded_file.name.endswith(".json"):
         df = extract_text_from_json(uploaded_file)
+        df.insert(0, "Pedido", [f"JSON-{i}" for i in range(len(df))])
 
-    with st.spinner("Analisando os comentários com IA..."):
+    with st.spinner("Analisando os pedidos com IA..."):
         df["Resultado IA"] = df["Comentario"].apply(lambda x: analisar_comentario_openai(str(x)))
 
     st.success("Análise concluída com sucesso!")
