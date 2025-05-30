@@ -67,7 +67,7 @@ def analisar_comentario_openai(comentario):
 
         # Selecionar 5 comentários reais da base
         exemplos_reais = historico_df.sample(n=min(5, len(historico_df)), random_state=42)["Comentario"].tolist()
-        contexto_exemplos = "Exemplos de comentários reais que geraram reclamação:
+        contexto_exemplos = "Exemplos de comentários reais que geraram reclamação:"
 " + "
 - " + "
 - ".join(exemplos_reais)
