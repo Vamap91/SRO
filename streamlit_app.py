@@ -3,9 +3,27 @@ import pandas as pd
 import fitz  # PyMuPDF
 import json
 import re
+import openai
 
 st.set_page_config(page_title="Analisador SRO", layout="wide")
 st.title("🔍 Analisador SRO - Previsão de Reclamações")
+
+# Configurar chave da OpenAI
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
+# Prompt V2 como system_message
+SRO_PROMPT_V2 = """
+Você é um especialista em análise preditiva de qualidade para uma empresa de serviços automotivos especializada em troca e reparo de vidros (VFLR) e funilaria/martelinho de ouro (RRSM). Seu papel é avaliar a chance de uma ordem de serviço gerar uma reclamação, com base exclusivamente em comentários deixados por atendentes após ligações com clientes.
+
+Atenção: todos os comentários do dataset de treinamento representam casos reais onde houve abertura de não conformidade (reclamação). Isso significa que o seu trabalho é identificar, entre novos comentários, quais se assemelham ou seguem padrões perigosos observados nesse histórico.
+
+Dada uma nova anotação de atendimento, responda com:
+- Pedido: N/A
+- Probabilidade de Reclamação: Baixa / Média / Alta / Crítica
+- Porcentagem de Reclamação: XX%
+- Fatores Críticos: Explique quais sinais do texto contribuíram para o risco
+- Conclusão: Resuma o risco e sugira ações se for médio ou superior
+"""
 
 # Função para extrair texto de PDF
 def extract_text_from_pdf(uploaded_file):
@@ -25,43 +43,22 @@ def extract_text_from_json(uploaded_file):
     else:
         return pd.DataFrame({"Comentario": [str(data)]})
 
-# Função para aplicar a lógica do Prompt V2
-def analisar_risco(texto):
-    texto = texto.lower()
-    pontos = 0
-
-    # Frequência de contato (peso 4)
-    if any(t in texto for t in ["ligou novamente", "cliente retornou", "novo contato", "reforcado"]):
-        freq_nota = 10
-    elif texto.count("contato") >= 2:
-        freq_nota = 5
-    else:
-        freq_nota = 2
-    pontos += freq_nota * 4
-
-    # Tempo de espera (peso 3)
-    atraso = any(t in texto for t in ["aguardando retorno", "sem previsao", "sem posicionamento", "prazo vencido", "reagendado"])
-    pontos += (10 if atraso else 2) * 3
-
-    # Falhas processuais (peso 2)
-    falha = any(t in texto for t in ["modelo errado", "endereco divergente", "nao foi informado", "nao retornaram", "peca errada", "tecnico nao apareceu", "problema tecnico", "falha na execucao"])
-    pontos += (10 if falha else 2) * 2
-
-    # Estado emocional (peso 1)
-    emocional = any(t in texto for t in ["irritado", "frustrado", "insatisfeito", "ameacou reclamar", "descontente", "cobrou solucao"])
-    pontos += (10 if emocional else 2) * 1
-
-    percentual = int(pontos)
-    if percentual <= 30:
-        classificacao = "Baixa"
-    elif percentual <= 60:
-        classificacao = "Media"
-    elif percentual <= 85:
-        classificacao = "Alta"
-    else:
-        classificacao = "Critica"
-
-    return percentual, classificacao
+# Função com chamada para OpenAI GPT
+@st.cache_data(show_spinner=False)
+def analisar_comentario_openai(comentario):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": SRO_PROMPT_V2},
+                {"role": "user", "content": comentario}
+            ],
+            temperature=0.3,
+            max_tokens=300
+        )
+        return response.choices[0].message['content']
+    except Exception as e:
+        return f"Erro na análise: {str(e)}"
 
 # Upload de arquivo
 uploaded_file = st.file_uploader("Envie um arquivo Excel, PDF ou JSON com os atendimentos", type=["xlsx", "pdf", "json"])
@@ -69,7 +66,7 @@ uploaded_file = st.file_uploader("Envie um arquivo Excel, PDF ou JSON com os ate
 if uploaded_file:
     if uploaded_file.name.endswith(".xlsx"):
         df = pd.read_excel(uploaded_file)
-        coluna = st.selectbox("Selecione a coluna com os comentarios:", df.columns)
+        coluna = st.selectbox("Selecione a coluna com os comentários:", df.columns)
         df = df[[coluna]].rename(columns={coluna: "Comentario"})
 
     elif uploaded_file.name.endswith(".pdf"):
@@ -78,8 +75,8 @@ if uploaded_file:
     elif uploaded_file.name.endswith(".json"):
         df = extract_text_from_json(uploaded_file)
 
-    # Aplica a análise
-    df[["Porcentagem de Reclamação", "Classificacao"]] = df["Comentario"].apply(lambda x: pd.Series(analisar_risco(str(x))))
+    with st.spinner("Analisando os comentários com IA..."):
+        df["Resultado IA"] = df["Comentario"].apply(lambda x: analisar_comentario_openai(str(x)))
 
     st.success("Análise concluída com sucesso!")
     st.dataframe(df)
