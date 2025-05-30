@@ -69,18 +69,9 @@ def gerar_pdf(df):
     pdf.set_font("Arial", size=12)
 
     for idx, row in df.iterrows():
-        comentario = row["Comentario"]
         resultado = row["Resultado IA"]
-
-        pdf.set_font("Arial", 'B', 12)
-        pdf.multi_cell(0, 10, f"Comentário {idx + 1}:")
-
-        pdf.set_font("Arial", '', 12)
-        pdf.multi_cell(0, 10, comentario)
-        pdf.ln(2)
-
-        pdf.set_font("Arial", 'I', 11)
-        pdf.multi_cell(0, 10, f"Resultado IA: {resultado}")
+        pdf.set_font("Arial", '', 11)
+        pdf.multi_cell(0, 10, f"{resultado}")
         pdf.ln(5)
         pdf.cell(190, 0, '', ln=True, border='T')
         pdf.ln(5)
