@@ -1,7 +1,9 @@
 streamlit
 pandas
+numpy
 openpyxl
 PyMuPDF
-openai
+openai>=1.0.0
+faiss-cpu
 json5
-fpdf
+datetime
