@@ -85,8 +85,9 @@ def gerar_pdf(df):
         pdf.cell(190, 0, '', ln=True, border='T')
         pdf.ln(5)
 
+    pdf_output = pdf.output(dest='S').encode('latin1')
     buffer = BytesIO()
-    pdf.output(buffer)
+    buffer.write(pdf_output)
     buffer.seek(0)
     return buffer
 
@@ -125,7 +126,6 @@ if uploaded_file:
     output = BytesIO()
     df.to_excel(output, index=False, engine='openpyxl')
     output.seek(0)
-
     st.download_button("📂 Baixar Relatório Excel", data=output, file_name="relatorio_sro.xlsx")
 
     # Download do PDF organizado
