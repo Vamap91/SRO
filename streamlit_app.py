@@ -121,7 +121,7 @@ with st.sidebar:
     Este aplicativo utiliza Inteligência Artificial com RAG (Retrieval Augmented Generation) 
     para prever a probabilidade de reclamações com base em comentários de atendimento.
     """)
-    st.markdown("Desenvolvido com ❤️ pela equipe SRO")
+    st.markdown("Desenvolvido por Vinicius Paschoa")
 
 # Função para extrair texto de PDF
 def extract_text_from_pdf(uploaded_file):
