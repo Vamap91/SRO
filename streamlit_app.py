@@ -78,29 +78,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Inicialização da chave da API OpenAI
-if 'openai_api_key' not in st.session_state:
-    try:
-        openai.api_key = st.secrets["openai"]["api_key"]
-        st.session_state['openai_api_key'] = openai.api_key
-    except:
-        st.session_state['openai_api_key'] = ""
+try:
+    openai.api_key = st.secrets["openai"]["api_key"]
+    st.session_state['openai_api_key'] = openai.api_key
+except:
+    st.error("Erro ao carregar a chave da API OpenAI. Verifique as configurações do Streamlit.")
+    st.session_state['openai_api_key'] = ""
 
 # Sidebar para configurações
 with st.sidebar:
     st.header("⚙️ Configurações")
-    
-    # Configuração da API OpenAI
-    if not st.session_state['openai_api_key']:
-        api_key = st.text_input("Chave da API OpenAI", type="password")
-        if api_key:
-            st.session_state['openai_api_key'] = api_key
-            openai.api_key = api_key
-            st.success("✅ Chave da API configurada!")
-    else:
-        st.success("✅ Chave da API OpenAI configurada!")
-        if st.button("Alterar chave da API"):
-            st.session_state['openai_api_key'] = ""
-            st.experimental_rerun()
     
     # Configurações do modelo
     st.subheader("Modelo de IA")
@@ -121,7 +108,6 @@ with st.sidebar:
     Este aplicativo utiliza Inteligência Artificial com RAG (Retrieval Augmented Generation) 
     para prever a probabilidade de reclamações com base em comentários de atendimento.
     """)
-    st.markdown("Desenvolvido por Vinicius Paschoa")
 
 # Função para extrair texto de PDF
 def extract_text_from_pdf(uploaded_file):
