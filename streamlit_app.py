@@ -77,11 +77,12 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Inicialização da chave da API OpenAI diretamente dos secrets
+# Inicialização silenciosa da chave da API OpenAI diretamente dos secrets
 try:
     openai.api_key = st.secrets["openai"]["api_key"]
-except Exception as e:
-    st.error(f"Erro ao carregar a chave da API OpenAI. Verifique as configurações do Streamlit.")
+except Exception:
+    # Tratamento silencioso - não exibe mensagem de erro na inicialização
+    pass
 
 # Sidebar para configurações
 with st.sidebar:
