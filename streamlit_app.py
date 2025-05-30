@@ -79,7 +79,7 @@ st.markdown("""
 
 # Inicialização silenciosa da chave da API OpenAI diretamente dos secrets
 try:
-    openai.api_key = st.secrets["openai"]["api_key"]
+    openai.api_key = st.secrets["OPENAI_API_KEY"]
 except Exception:
     # Tratamento silencioso - não exibe mensagem de erro na inicialização
     pass
