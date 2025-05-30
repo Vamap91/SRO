@@ -4,6 +4,7 @@ import fitz  # PyMuPDF
 import json
 import re
 import openai
+from io import BytesIO
 
 st.set_page_config(page_title="Analisador SRO", layout="wide")
 st.title("🔍 Analisador SRO - Previsão de Reclamações")
@@ -81,6 +82,9 @@ if uploaded_file:
     st.success("Análise concluída com sucesso!")
     st.dataframe(df)
 
-    # Download do Excel
-    output = df.to_excel(index=False, engine='openpyxl')
+    # Download do Excel corrigido
+    output = BytesIO()
+    df.to_excel(output, index=False, engine='openpyxl')
+    output.seek(0)
+
     st.download_button("📂 Baixar Relatório Excel", data=output, file_name="relatorio_sro.xlsx")
