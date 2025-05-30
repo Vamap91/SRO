@@ -71,6 +71,8 @@ def analisar_comentario_openai(comentario):
 " + "
 - " + "
 - ".join(exemplos_reais)
+- " + "
+- ".join(exemplos_reais)
 
         prompt_usuario = f"""
 {contexto_exemplos}
