@@ -1,19 +1,21 @@
-# 🎈 Blank app template
+# 📊 Analisador de Reclamações - SRO
 
-A simple Streamlit app template for you to modify!
+Este app analisa comentários de pedidos de atendimento e prevê a chance de gerar uma reclamação.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://blank-app-template.streamlit.app/)
+## Funcionalidades
+- Upload de arquivos Excel, PDF ou JSON
+- Agrupamento por número de pedido
+- Análise com IA (GPT-4)
+- Geração de relatório em Excel e PDF com ícones visuais de risco
 
-### How to run it on your own machine
+## Como usar
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-1. Install the requirements
+## Requisitos
+- Python 3.8+
+- Chave da OpenAI no `secrets.toml`
 
-   ```
-   $ pip install -r requirements.txt
-   ```
-
-2. Run the app
-
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+Ainda está em desenvolvimento por Vinicius Paschoa
