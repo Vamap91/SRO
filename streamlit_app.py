@@ -71,6 +71,7 @@ if uploaded_file:
             if df.empty or df.shape[1] == 1 and df.columns[0].startswith("Unnamed"):
                 uploaded_file.seek(0)
                 df = pd.read_excel(uploaded_file, header=None)
+                df = df.iloc[:, [0]]
                 df.columns = ["Comentario"]
             else:
                 coluna = st.selectbox("Selecione a coluna com os comentários:", df.columns)
