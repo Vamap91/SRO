@@ -7,7 +7,7 @@ from openai import OpenAI
 from io import BytesIO
 from fpdf import FPDF
 
-st.set_page_config(page_title="Analisador SRO", layout="wide")
+st.set_page_config(page_title="Analisador SRO - Previsão de Reclamações")
 st.title("🔍 Analisador SRO - Previsão de Reclamações")
 
 # Instanciar cliente OpenAI
@@ -108,14 +108,18 @@ if uploaded_file:
     if uploaded_file.name.endswith(".xlsx"):
         try:
             df = pd.read_excel(uploaded_file)
-            colunas = st.multiselect("Selecione as colunas:", df.columns, default=df.columns[:2])
-            if len(colunas) >= 2:
-                df = df[colunas[:2]]
+            if df.shape[1] == 1:
+                df.insert(0, "Pedido", [f"Linha {i+1}" for i in range(len(df))])
                 df.columns = ["Pedido", "Comentario"]
-                df = df.groupby("Pedido")["Comentario"].apply(lambda x: '\n'.join(x)).reset_index()
             else:
-                st.error("Selecione pelo menos duas colunas: número do pedido e comentários.")
-                st.stop()
+                colunas = st.multiselect("Selecione as colunas:", df.columns, default=df.columns[:2])
+                if len(colunas) >= 2:
+                    df = df[colunas[:2]]
+                    df.columns = ["Pedido", "Comentario"]
+                    df = df.groupby("Pedido")["Comentario"].apply(lambda x: '\n'.join(x)).reset_index()
+                else:
+                    st.error("Selecione pelo menos duas colunas: número do pedido e comentários.")
+                    st.stop()
         except Exception as e:
             st.error(f"Erro ao ler o arquivo Excel: {e}")
             st.stop()
