@@ -7,3 +7,6 @@ openai>=1.0.0
 faiss-cpu
 json5
 datetime
+langchain
+langchain-text-splitters
+pickle5
