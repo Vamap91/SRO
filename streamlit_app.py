@@ -10,6 +10,9 @@ import faiss
 import time
 import base64
 from datetime import datetime
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import pickle
+import csv
 
 # Configuração da página
 st.set_page_config(
@@ -65,6 +68,10 @@ st.markdown("""
         height: 60px;
         margin-right: 1rem;
     }
+    .progress-container {
+        margin-top: 1rem;
+        margin-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -98,7 +105,7 @@ with st.sidebar:
     
     # Configurações RAG
     st.subheader("Configurações RAG")
-    num_exemplos = st.slider("Número de exemplos históricos:", 1, 10, 5)
+    num_exemplos = st.slider("Número de exemplos históricos:", 3, 10, 5)
     
     # Informações sobre o projeto
     st.markdown("---")
@@ -107,6 +114,13 @@ with st.sidebar:
     Este aplicativo utiliza Inteligência Artificial com RAG (Retrieval Augmented Generation) 
     para prever a probabilidade de reclamações com base em comentários de atendimento.
     """)
+
+# Constantes e configurações
+FAISS_INDEX_PATH = "sro_faiss_index.bin"
+CHUNKS_METADATA_PATH = "sro_chunks_metadata.csv"
+HISTORICAL_DATA_PATH = "InformaçõesSRO.xlsx - Planila3.csv"
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 100
 
 # Função para extrair texto de PDF
 def extract_text_from_pdf(uploaded_file):
@@ -184,126 +198,281 @@ def get_embedding(text, model="text-embedding-ada-002"):
         st.error(f"Erro ao gerar embedding: {e}")
         return np.zeros(1536)  # Retorna um vetor de zeros em caso de erro
 
-# Função para carregar e indexar a base histórica
-@st.cache_resource
-def load_historical_data(file_path):
+# Função para dividir texto em chunks
+def split_text_into_chunks(text, chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP):
+    if not text or not isinstance(text, str):
+        return []
+    
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len,
+        separators=["\n\n", "\n", ". ", " ", ""]
+    )
+    
+    chunks = text_splitter.split_text(text)
+    return chunks
+
+# Função para salvar o índice FAISS
+def save_faiss_index(index, file_path):
     try:
-        # Carregar o arquivo Excel
-        df = pd.read_excel(file_path)
+        faiss.write_index(index, file_path)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar índice FAISS: {e}")
+        return False
+
+# Função para carregar o índice FAISS
+def load_faiss_index(file_path):
+    try:
+        if os.path.exists(file_path):
+            index = faiss.read_index(file_path)
+            return index
+        return None
+    except Exception as e:
+        st.error(f"Erro ao carregar índice FAISS: {e}")
+        return None
+
+# Função para salvar metadados dos chunks
+def save_chunks_metadata(chunks_metadata, file_path):
+    try:
+        # Remover a coluna de embedding antes de salvar para economizar espaço
+        if 'embedding' in chunks_metadata.columns:
+            chunks_metadata = chunks_metadata.drop(columns=['embedding'])
         
-        # Verificar se há uma coluna de comentários
-        comment_col = None
-        for col in df.columns:
-            if "coment" in col.lower() or "anota" in col.lower():
-                comment_col = col
-                break
+        chunks_metadata.to_csv(file_path, index=False)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar metadados dos chunks: {e}")
+        return False
+
+# Função para carregar metadados dos chunks
+def load_chunks_metadata(file_path):
+    try:
+        if os.path.exists(file_path):
+            chunks_metadata = pd.read_csv(file_path)
+            return chunks_metadata
+        return None
+    except Exception as e:
+        st.error(f"Erro ao carregar metadados dos chunks: {e}")
+        return None
+
+# Função para carregar e indexar a base histórica com chunking
+@st.cache_resource
+def load_and_index_historical_data_with_chunking():
+    # Verificar se os arquivos de índice e metadados já existem
+    index = load_faiss_index(FAISS_INDEX_PATH)
+    chunks_metadata = load_chunks_metadata(CHUNKS_METADATA_PATH)
+    
+    if index is not None and chunks_metadata is not None:
+        st.success("✅ Base histórica carregada do cache!")
+        return index, chunks_metadata
+    
+    # Se não existirem, processar a base histórica
+    st.info("🔄 Processando base histórica pela primeira vez. Isso pode levar alguns minutos...")
+    
+    try:
+        # Carregar o arquivo CSV
+        if not os.path.exists(HISTORICAL_DATA_PATH):
+            st.error(f"❌ Arquivo {HISTORICAL_DATA_PATH} não encontrado.")
+            return None, None
         
-        if not comment_col:
-            comment_col = df.columns[0]  # Usa a primeira coluna se não encontrar uma específica
+        df = pd.read_csv(HISTORICAL_DATA_PATH)
+        
+        # Assumir que a primeira coluna (índice 0) contém os comentários
+        comment_col = df.columns[0]
         
         # Filtrar linhas com comentários válidos
         df = df[[comment_col]].rename(columns={comment_col: "Comentario"})
         df = df.dropna(subset=["Comentario"]).reset_index(drop=True)
         df = df[df["Comentario"].astype(str).str.len() > 5]  # Filtra comentários muito curtos
         
-        # Gerar embeddings para cada comentário
-        st.info(f"Gerando embeddings para {len(df)} comentários históricos. Isso pode levar alguns minutos...")
+        # Adicionar coluna de ID para rastreabilidade
+        df["ID_Original"] = [f"OS_Hist_{i+1}" for i in range(len(df))]
         
-        # Processar em lotes para evitar sobrecarga da API
-        batch_size = 100
+        # Dividir comentários em chunks
+        all_chunks = []
         all_embeddings = []
         
         progress_bar = st.progress(0)
-        for i in range(0, len(df), batch_size):
-            batch = df.iloc[i:i+batch_size]
-            batch_embeddings = [get_embedding(text) for text in batch["Comentario"].astype(str)]
-            all_embeddings.extend(batch_embeddings)
-            progress_bar.progress(min(1.0, (i + batch_size) / len(df)))
+        status_text = st.empty()
         
-        progress_bar.empty()
+        total_comments = len(df)
+        
+        for i, row in enumerate(df.iterrows()):
+            idx, data = row
+            comment = data["Comentario"]
+            id_original = data["ID_Original"]
+            
+            status_text.text(f"Processando comentário {i+1}/{total_comments}...")
+            
+            # Dividir o comentário em chunks
+            chunks = split_text_into_chunks(str(comment))
+            
+            # Para cada chunk, criar um registro com metadados
+            for j, chunk in enumerate(chunks):
+                chunk_id = f"{id_original}_chunk_{j+1}"
+                all_chunks.append({
+                    "chunk_id": chunk_id,
+                    "chunk_text": chunk,
+                    "id_original": id_original,
+                    "comentario_original": comment
+                })
+            
+            # Atualizar barra de progresso
+            progress_bar.progress((i + 1) / total_comments)
+        
+        # Criar DataFrame de chunks
+        chunks_df = pd.DataFrame(all_chunks)
+        
+        # Gerar embeddings para cada chunk
+        status_text.text("Gerando embeddings para chunks...")
+        progress_bar.progress(0)
+        
+        total_chunks = len(chunks_df)
+        batch_size = 100  # Processar em lotes para evitar sobrecarga da API
+        
+        for i in range(0, total_chunks, batch_size):
+            batch = chunks_df.iloc[i:min(i+batch_size, total_chunks)]
+            
+            batch_embeddings = []
+            for _, row in batch.iterrows():
+                embedding = get_embedding(row["chunk_text"])
+                batch_embeddings.append(embedding)
+            
+            all_embeddings.extend(batch_embeddings)
+            
+            # Atualizar barra de progresso
+            progress_bar.progress(min(1.0, (i + batch_size) / total_chunks))
+        
+        # Adicionar embeddings ao DataFrame
+        chunks_df["embedding"] = all_embeddings
+        
+        # Criar índice FAISS
+        status_text.text("Criando índice FAISS...")
         
         # Converter para array numpy
         embeddings_array = np.array(all_embeddings).astype('float32')
         
-        # Criar índice FAISS
+        # Criar índice
         dimension = embeddings_array.shape[1]  # Dimensão dos embeddings
         index = faiss.IndexFlatL2(dimension)
         index.add(embeddings_array)
         
-        return df, index, embeddings_array
+        # Salvar índice e metadados
+        status_text.text("Salvando índice e metadados...")
+        save_faiss_index(index, FAISS_INDEX_PATH)
+        save_chunks_metadata(chunks_df, CHUNKS_METADATA_PATH)
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        st.success(f"✅ Base histórica processada com sucesso! {len(chunks_df)} chunks gerados de {total_comments} comentários.")
+        
+        return index, chunks_df
     
     except Exception as e:
-        st.error(f"Erro ao carregar dados históricos: {e}")
-        return pd.DataFrame({"Comentario": []}), None, None
+        st.error(f"❌ Erro ao processar base histórica: {e}")
+        return None, None
 
-# Função para buscar comentários similares
-def find_similar_comments(query_embedding, index, df, embeddings_array, k=5):
-    if index is None or embeddings_array is None:
-        return pd.DataFrame({"Comentario": []})
+# Função para buscar chunks similares
+def retrieve_similar_examples(query_embedding, index, chunks_metadata, k=5):
+    if index is None or chunks_metadata is None:
+        return pd.DataFrame()
     
     try:
-        # Buscar os k comentários mais similares
+        # Buscar os k chunks mais similares
         distances, indices = index.search(np.array([query_embedding]).astype('float32'), k)
         
-        # Criar DataFrame com os resultados
-        similar_df = pd.DataFrame({
-            "Comentario": df.iloc[indices[0]]["Comentario"].values,
-            "Similaridade": 1 - (distances[0] / np.max(distances[0]) if np.max(distances[0]) > 0 else distances[0])
-        })
+        # Obter os chunks correspondentes
+        similar_chunks = chunks_metadata.iloc[indices[0]]
         
-        return similar_df
+        # Criar um conjunto para rastrear IDs originais já vistos
+        seen_ids = set()
+        unique_examples = []
+        
+        # Filtrar para obter comentários originais únicos
+        for _, row in similar_chunks.iterrows():
+            id_original = row["id_original"]
+            if id_original not in seen_ids:
+                seen_ids.add(id_original)
+                unique_examples.append({
+                    "ID_Original": id_original,
+                    "Comentario_Original": row["comentario_original"],
+                    "Similaridade": 1 - (distances[0][len(unique_examples)] / np.max(distances[0]) if np.max(distances[0]) > 0 else distances[0][len(unique_examples)])
+                })
+                
+                # Limitar ao número de exemplos solicitado
+                if len(unique_examples) >= min(k, len(similar_chunks)):
+                    break
+        
+        return pd.DataFrame(unique_examples)
     
     except Exception as e:
-        st.error(f"Erro na busca de comentários similares: {e}")
-        return pd.DataFrame({"Comentario": []})
+        st.error(f"Erro na busca de exemplos similares: {e}")
+        return pd.DataFrame()
 
-# Função para analisar comentário com GPT-4
-def analisar_comentario_openai(comentario, similar_comments, model="gpt-4"):
+# Função para analisar comentário com GPT-4 usando RAG
+def analisar_comentario_openai_with_rag(pedido, comentario, index, chunks_metadata, num_exemplos=5, model="gpt-4"):
     try:
+        # Gerar embedding para o comentário
+        comentario_embedding = get_embedding(str(comentario))
+        
+        # Buscar exemplos similares
+        similar_examples = retrieve_similar_examples(
+            comentario_embedding, 
+            index, 
+            chunks_metadata, 
+            k=num_exemplos
+        )
+        
         # Construir o prompt com os exemplos históricos
         exemplos_historicos = ""
-        for i, (_, row) in enumerate(similar_comments.iterrows(), 1):
-            exemplos_historicos += f"Exemplo {i} (Similaridade: {row['Similaridade']:.2f}):\n{row['Comentario']}\n\n"
+        for i, (_, row) in enumerate(similar_examples.iterrows(), 1):
+            exemplos_historicos += f"Exemplo {i} (OS: {row['ID_Original']}, Similaridade: {row['Similaridade']:.2f}):\n{row['Comentario_Original']}\n\n"
         
-        system_message = """Você é um especialista em análise preditiva de qualidade de atendimento ao cliente. 
-Sua tarefa é analisar comentários de atendimento e prever a probabilidade de uma reclamação formal ser aberta.
+        system_message = """Você é um especialista em análise preditiva de qualidade para uma empresa de serviços automotivos (troca/reparo de vidros - VFLR, e funilaria/martelinho de ouro - RRSM). Sua função é prever a probabilidade de uma Ordem de Serviço (OS) gerar uma reclamação formal, com base em anotações de atendimento e exemplos históricos.
 
-Considere os seguintes fatores e seus pesos para sua análise:
+**Objetivo:** Classificar o risco de reclamação e fornecer uma análise detalhada.
 
-1. Frequência de Contatos (Peso 4):
-   - 1 contato: baixo risco
-   - 2 contatos: médio risco
-   - 3+ contatos: risco elevado
+**Fatores Preditivos Fundamentais (Peso de Influência na Probabilidade):**
+1.  **Frequência de Contatos (Peso 4):** Indique no comentário se o cliente já realizou múltiplos contatos sobre a mesma OS.
+    * 1 contato: baixo risco
+    * 2 contatos: médio risco
+    * 3+ contatos: risco elevado
+2.  **Tempo de Espera (Peso 3):** Identifique atrasos ou esperas prolongadas.
+    * Negociação Carglass: > 1 dia útil
+    * Acompanhamento de peças (VFLR): > 5 dias úteis
+    * Agendamento: > 1 dia útil
+    * Confirmação de execução: qualquer atraso
+3.  **Falhas Processuais (Peso 2):** Detecte erros que causem retrabalho ou frustração.
+    * Cadastro incorreto (endereço/placa/modelo)
+    * Solicitações específicas não atendidas
+    * Falhas de comunicação entre setores
+    * Problemas técnicos após execução do serviço (gravidade alta)
+4.  **Estado Emocional do Cliente (Peso 1):** Procure por sinais de frustração, irritação, insatisfação ou exigências.
 
-2. Tempo de Espera (Peso 3):
-   - Negociação Carglass: > 1 dia útil
-   - Acompanhamento de peças (VFLR): > 5 dias úteis
-   - Agendamento: > 1 dia útil
-   - Confirmação de execução: qualquer atraso
+**Metodologia para Cálculo da Probabilidade e Classificação (Com base nos seus dados históricos):**
+* Avalie a presença e a intensidade dos Fatores Preditivos Fundamentais inferidos do comentário e exemplos históricos.
+* **Dê atenção especial às palavras-chave e padrões frequentemente encontrados em reclamações históricas:** `cliente`, `contato`, `sinistro`, `informa`, `veículo`, `aguardando`, `retorno`, `troca`, `serviço`, `data`, `guincho`, `assistência`, `execução`, `peça`, `segurado`, `local`, `confirma`, `horas`, `pedido`, `atendente`, e bigrams como `cliente informa`, `aguardando retorno`, `contato cliente`, `guincho assistência 24h`, `assistência 24h`. A presença destes termos, especialmente se combinados, aumenta significativamente o risco.
+* Classifique o risco e a porcentagem:
+    * Baixa: 0-30%
+    * Média: 31-60%
+    * Alta: 61-85%
+    * Crítica: 86-100%
 
-3. Falhas Processuais (Peso 2):
-   - Cadastro incorreto (endereço/placa/modelo)
-   - Solicitações específicas não atendidas
-   - Falhas de comunicação entre setores
-   - Problemas técnicos após execução do serviço (gravidade alta)
-
-4. Estado Emocional do Cliente (Peso 1):
-   - Indicações de frustração, irritação, insatisfação
-
-Classifique o risco e a porcentagem:
-- Baixa: 0-30%
-- Média: 31-60%
-- Alta: 61-85%
-- Crítica: 86-100%
-
-Sua resposta deve seguir EXATAMENTE este formato:
-Probabilidade de Reclamação: [Baixa/Média/Alta/Crítica]
-Porcentagem de Reclamação: [XX%]
-Fatores Críticos: [Liste os fatores que contribuíram para o risco]
-Conclusão: [Resumo conciso da análise com sugestão de ação preventiva se o risco for Médio ou superior]
-"""
+**Formato de Resposta Esperado (ESTRITAMENTE SEGUIR ESTE FORMATO):**
+```
+- Pedido: [NÚMERO_DA_OS_OU_N/A]
+- Probabilidade de Reclamação: [Baixa/Média/Alta/Crítica]
+- Porcentagem de Reclamação: [XX%]
+- Fatores Críticos: [Liste os fatores (Frequência, Tempo, Falhas, Estado Emocional) que contribuíram para o risco, citando sinais específicos do comentário (incluindo as palavras-chave relevantes) e/ou dos exemplos históricos. Ex: "Atraso no tempo de espera (3 dias, palavra 'aguardando' presente), cliente demonstra irritação (inferido de tom e vocabulário), similar a caso histórico de 'atraso guincho'."]
+- Conclusão: [Resumo conciso do risco e sugestão de ação preventiva se o risco for Médio ou superior. Ex: "Risco alto devido a múltiplos atrasos. Necessário contato imediato para oferecer solução e evitar escalada do sinistro."]
+```"""
 
         user_message = f"""Analise o seguinte comentário de atendimento e determine a probabilidade de uma reclamação formal ser aberta:
+
+PEDIDO/OS: {pedido}
 
 COMENTÁRIO A ANALISAR:
 {comentario}
@@ -336,21 +505,24 @@ def extract_info_from_ai_response(response):
         info = {}
         
         for line in lines:
-            if "Probabilidade de Reclamação:" in line:
+            if "- Pedido:" in line:
+                info["pedido"] = line.split(":", 1)[1].strip()
+            elif "- Probabilidade de Reclamação:" in line:
                 info["probabilidade"] = line.split(":", 1)[1].strip()
-            elif "Porcentagem de Reclamação:" in line:
+            elif "- Porcentagem de Reclamação:" in line:
                 percentage_text = line.split(":", 1)[1].strip()
                 percentage = ''.join(filter(lambda x: x.isdigit() or x == '.', percentage_text))
                 info["porcentagem"] = float(percentage)
-            elif "Fatores Críticos:" in line:
+            elif "- Fatores Críticos:" in line:
                 info["fatores"] = line.split(":", 1)[1].strip()
-            elif "Conclusão:" in line:
+            elif "- Conclusão:" in line:
                 info["conclusao"] = line.split(":", 1)[1].strip()
         
         return info
     except Exception as e:
         st.error(f"Erro ao extrair informações da resposta da IA: {e}")
         return {
+            "pedido": "Erro",
             "probabilidade": "Erro",
             "porcentagem": 0,
             "fatores": "Erro na extração",
@@ -361,6 +533,7 @@ def extract_info_from_ai_response(response):
 def format_result_display(pedido, ai_response):
     info = extract_info_from_ai_response(ai_response)
     
+    pedido_display = info.get("pedido", pedido)
     probabilidade = info.get("probabilidade", "Erro")
     porcentagem = info.get("porcentagem", 0)
     fatores = info.get("fatores", "Não identificados")
@@ -378,7 +551,7 @@ def format_result_display(pedido, ai_response):
     
     html = f"""
     <div style="border: 1px solid #ddd; padding: 15px; border-radius: 5px; margin-bottom: 10px;">
-        <h3>Pedido: {pedido}</h3>
+        <h3>Pedido: {pedido_display}</h3>
         <p><strong>Probabilidade de Reclamação:</strong> <span class="{risk_class}">{probabilidade}</span></p>
         <p><strong>Porcentagem de Risco:</strong> <span class="{risk_class}">{porcentagem}%</span></p>
         <p><strong>Fatores Críticos:</strong> {fatores}</p>
@@ -389,34 +562,28 @@ def format_result_display(pedido, ai_response):
 
 # Função principal
 def main():
-    # Carregar dados históricos
-    file_path = "InformaçõesSRO.xlsx"
-    
-    if os.path.exists(file_path):
-        with st.spinner("Carregando e indexando dados históricos..."):
-            historico_df, index, embeddings_array = load_historical_data(file_path)
-            if not historico_df.empty and index is not None:
-                st.success(f"✅ Base histórica carregada com {len(historico_df)} registros")
-            else:
-                st.error("❌ Erro ao carregar a base histórica")
-    else:
-        st.error(f"❌ Arquivo {file_path} não encontrado. A análise será feita sem exemplos históricos.")
-        historico_df = pd.DataFrame({"Comentario": []})
-        index = None
-        embeddings_array = None
+    # Carregar e indexar a base histórica
+    with st.spinner("Carregando e indexando base histórica..."):
+        index, chunks_metadata = load_and_index_historical_data_with_chunking()
+        if index is None or chunks_metadata is None:
+            st.error("❌ Erro ao carregar a base histórica. Verifique se o arquivo CSV está disponível.")
+            st.stop()
     
     # Upload de arquivo
     st.subheader("📤 Upload de Arquivo")
-    uploaded_file = st.file_uploader("Envie um arquivo Excel, PDF ou JSON com os atendimentos", type=["xlsx", "pdf", "json"])
+    uploaded_file = st.file_uploader("Envie um arquivo Excel, PDF ou JSON com os atendimentos", type=["xlsx", "pdf", "json", "csv"])
     
     # Inicializa DataFrame fora do if para evitar NameError
     df = pd.DataFrame()
     
     if uploaded_file:
         with st.spinner("Processando arquivo..."):
-            if uploaded_file.name.endswith(".xlsx"):
+            if uploaded_file.name.endswith((".xlsx", ".csv")):
                 try:
-                    df = pd.read_excel(uploaded_file)
+                    if uploaded_file.name.endswith(".xlsx"):
+                        df = pd.read_excel(uploaded_file)
+                    else:  # CSV
+                        df = pd.read_csv(uploaded_file)
                     
                     # Exibir informações sobre o arquivo
                     st.info(f"Arquivo carregado: {uploaded_file.name} | {df.shape[0]} linhas x {df.shape[1]} colunas")
@@ -427,70 +594,57 @@ def main():
                         df = pd.DataFrame({"Pedido": ["Pedido 1"], "Comentario": [comentario]})
                     elif df.shape[1] == 1:
                         # Se for uma única coluna, assume que é o comentário
-                        df.insert(0, "Pedido", [f"Linha {i+1}" for i in range(len(df))])
+                        df.insert(0, "Pedido", [f"OS_Temp_{i+1}" for i in range(len(df))])
                         df.columns = ["Pedido", "Comentario"]
                     else:
-                        # Tenta identificar colunas de pedido e comentário
+                        # Permitir que o usuário selecione as colunas
                         colunas_disponiveis = df.columns.tolist()
                         
-                        # Tentativa de identificar colunas "Pedido" e "Comentario" automaticamente
-                        coluna_pedido = None
-                        coluna_comentario = None
+                        st.subheader("Seleção de Colunas")
                         
-                        for col in colunas_disponiveis:
-                            col_lower = col.lower()
-                            if "pedido" in col_lower or "os" in col_lower or "id" in col_lower or "protocolo" in col_lower:
-                                if coluna_pedido is None:  # Prioriza a primeira encontrada
-                                    coluna_pedido = col
-                            if "comentario" in col_lower or "anotacao" in col_lower or "obs" in col_lower or "descricao" in col_lower:
-                                if coluna_comentario is None:  # Prioriza a primeira encontrada
-                                    coluna_comentario = col
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            coluna_pedido = st.selectbox(
+                                "Selecione a coluna de Pedido/OS:",
+                                options=["Nenhuma"] + colunas_disponiveis,
+                                index=0
+                            )
                         
-                        if coluna_pedido and coluna_comentario and coluna_pedido != coluna_comentario:
-                            st.success(f"✅ Colunas identificadas automaticamente: Pedido='{coluna_pedido}', Comentário='{coluna_comentario}'")
-                            df = df[[coluna_pedido, coluna_comentario]].rename(columns={coluna_pedido: "Pedido", coluna_comentario: "Comentario"})
+                        with col2:
+                            coluna_comentario = st.selectbox(
+                                "Selecione a coluna de Comentários:",
+                                options=colunas_disponiveis,
+                                index=0 if colunas_disponiveis else None
+                            )
+                        
+                        if coluna_comentario:
+                            if coluna_pedido != "Nenhuma":
+                                df = df[[coluna_pedido, coluna_comentario]].rename(columns={coluna_pedido: "Pedido", coluna_comentario: "Comentario"})
+                            else:
+                                # Se não selecionou coluna de pedido, gera IDs temporários
+                                df = df[[coluna_comentario]].rename(columns={coluna_comentario: "Comentario"})
+                                df.insert(0, "Pedido", [f"OS_Temp_{i+1}" for i in range(len(df))])
+                            
+                            # Agrupa por pedido para evitar duplicatas
                             df["Comentario"] = df.groupby("Pedido")["Comentario"].transform(lambda x: '\n'.join(x.astype(str)))
                             df = df.drop_duplicates(subset=["Pedido"]).reset_index(drop=True)
                         else:
-                            # Se não identificar automaticamente, pede para o usuário selecionar
-                            st.warning("⚠️ Não foi possível identificar as colunas de 'Pedido' e 'Comentário' automaticamente. Por favor, selecione-as manualmente.")
-                            
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                coluna_pedido = st.selectbox(
-                                    "Selecione a coluna de Pedido/ID:",
-                                    options=colunas_disponiveis,
-                                    index=0 if colunas_disponiveis else None
-                                )
-                            
-                            with col2:
-                                coluna_comentario = st.selectbox(
-                                    "Selecione a coluna de Comentários:",
-                                    options=colunas_disponiveis,
-                                    index=min(1, len(colunas_disponiveis)-1) if len(colunas_disponiveis) > 1 else None
-                                )
-                            
-                            if coluna_pedido and coluna_comentario:
-                                df = df[[coluna_pedido, coluna_comentario]].rename(columns={coluna_pedido: "Pedido", coluna_comentario: "Comentario"})
-                                df["Comentario"] = df.groupby("Pedido")["Comentario"].transform(lambda x: '\n'.join(x.astype(str)))
-                                df = df.drop_duplicates(subset=["Pedido"]).reset_index(drop=True)
-                            else:
-                                st.error("❌ Selecione as colunas de Pedido e Comentário para continuar.")
-                                st.stop()
+                            st.error("❌ Selecione a coluna de Comentário para continuar.")
+                            st.stop()
                 
                 except Exception as e:
-                    st.error(f"❌ Erro ao ler o arquivo Excel: {e}")
+                    st.error(f"❌ Erro ao ler o arquivo: {e}")
                     st.stop()
             
             elif uploaded_file.name.endswith(".pdf"):
                 df = extract_text_from_pdf(uploaded_file)
                 # Adiciona uma coluna de "Pedido" fictícia para PDFs
-                df.insert(0, "Pedido", [f"PDF-{i+1}" for i in range(len(df))])
+                df.insert(0, "Pedido", [f"PDF_{i+1}" for i in range(len(df))])
             
             elif uploaded_file.name.endswith(".json"):
                 df = extract_text_from_json(uploaded_file)
                 # Adiciona uma coluna de "Pedido" fictícia para JSONs
-                df.insert(0, "Pedido", [f"JSON-{i+1}" for i in range(len(df))])
+                df.insert(0, "Pedido", [f"JSON_{i+1}" for i in range(len(df))])
         
         # Processar os comentários se o DataFrame não estiver vazio
         if not df.empty:
@@ -520,20 +674,16 @@ def main():
                     
                     status_text.text(f"Analisando pedido {pedido} ({i+1}/{len(df)})...")
                     
-                    # Gerar embedding para o comentário atual
-                    comentario_embedding = get_embedding(str(comentario))
-                    
-                    # Buscar comentários similares na base histórica
-                    similar_comments = find_similar_comments(
-                        comentario_embedding, 
-                        index, 
-                        historico_df, 
-                        embeddings_array, 
-                        k=num_exemplos
+                    # Analisar com GPT-4 usando RAG
+                    resultado = analisar_comentario_openai_with_rag(
+                        pedido,
+                        str(comentario),
+                        index,
+                        chunks_metadata,
+                        num_exemplos=num_exemplos,
+                        model=model
                     )
                     
-                    # Analisar com GPT-4
-                    resultado = analisar_comentario_openai(str(comentario), similar_comments, model=model)
                     df.at[idx, "Resultado IA"] = resultado
                     
                     # Formatar HTML para exibição
