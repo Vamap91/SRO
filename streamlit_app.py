@@ -7,6 +7,8 @@ import pickle
 import json
 import PyPDF2
 import io
+import requests
+import os
 from typing import List, Dict, Tuple, Optional
 import plotly.express as px
 import plotly.graph_objects as go
@@ -20,6 +22,108 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+@st.cache_data
+def download_sro_files():
+    """
+    Download automático apenas do arquivo grande (Embeddings_SRO.index)
+    O arquivo Dados_SRO.pkl já está no repositório GitHub
+    """
+    
+    # Configuração do arquivo grande no Google Drive
+    embeddings_info = {
+        "id": "1EHrakmYbVCD6E_aEzhmbMp17stHEw9lU",  # ✅ ID do seu arquivo
+        "filename": "Embeddings_SRO.index",
+        "size_mb": "~150MB"
+    }
+    
+    # Verificar se o arquivo pequeno existe no repositório
+    if not os.path.exists("Dados_SRO.pkl"):
+        st.error("""
+        ❌ **Arquivo Dados_SRO.pkl não encontrado**
+        
+        Este arquivo deveria estar no repositório GitHub.
+        Certifique-se de que você fez o upload correto.
+        """)
+        return False
+    else:
+        st.success("✅ Dados_SRO.pkl encontrado no repositório")
+    
+    # Verificar se precisa baixar o arquivo grande
+    if not os.path.exists(embeddings_info["filename"]):
+        file_url = f"https://drive.google.com/uc?export=download&id={embeddings_info['id']}"
+        
+        with st.spinner(f"📥 Baixando {embeddings_info['filename']} ({embeddings_info['size_mb']})..."):
+            try:
+                # Download com verificação
+                response = requests.get(file_url, stream=True)
+                response.raise_for_status()
+                
+                # Verificar se é um arquivo válido (não página de erro)
+                content_type = response.headers.get('content-type', '')
+                if 'text/html' in content_type:
+                    st.error(f"""
+                    ❌ **Erro de Download: {embeddings_info['filename']}**
+                    
+                    O arquivo não pôde ser baixado do Google Drive.
+                    
+                    **Possíveis soluções:**
+                    1. Verifique se o arquivo está público (Anyone with the link can view)
+                    2. Teste o link manualmente: {file_url}
+                    3. ID atual: {embeddings_info['id']}
+                    """)
+                    return False
+                
+                # Salvar arquivo com progresso
+                total_size = int(response.headers.get('content-length', 0))
+                progress_bar = st.progress(0)
+                
+                with open(embeddings_info["filename"], 'wb') as f:
+                    downloaded = 0
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                progress = downloaded / total_size
+                                progress_bar.progress(progress)
+                
+                # Verificar se download foi bem-sucedido
+                if os.path.exists(embeddings_info["filename"]) and os.path.getsize(embeddings_info["filename"]) > 1000000:  # > 1MB
+                    st.success(f"✅ {embeddings_info['filename']} baixado com sucesso!")
+                    return True
+                else:
+                    st.error(f"❌ Falha no download de {embeddings_info['filename']}")
+                    return False
+                    
+            except requests.RequestException as e:
+                st.error(f"❌ Erro de rede ao baixar {embeddings_info['filename']}: {str(e)}")
+                return False
+            except Exception as e:
+                st.error(f"❌ Erro inesperado ao baixar {embeddings_info['filename']}: {str(e)}")
+                return False
+    else:
+        st.info(f"📁 {embeddings_info['filename']} já existe localmente")
+    
+    return True
+
+def check_files_status():
+    """Verifica status dos arquivos SRO"""
+    required_files = ["Embeddings_SRO.index", "Dados_SRO.pkl"]
+    files_status = {}
+    
+    for file in required_files:
+        exists = os.path.exists(file)
+        size = os.path.getsize(file) if exists else 0
+        source = "GitHub" if file == "Dados_SRO.pkl" else "Google Drive"
+        
+        files_status[file] = {
+            "exists": exists,
+            "size_mb": round(size / (1024*1024), 1) if exists else 0,
+            "source": source
+        }
+    
+    return files_status
 
 class SROAnalyzer:
     """Classe principal para análise de risco de reclamações SRO"""
@@ -243,60 +347,84 @@ def main():
             help="Insira sua chave da API OpenAI"
         )
         
-        # Verificação dos arquivos
-        st.header("📁 Status do Sistema")
+        # Status dos arquivos
+        st.header("📁 Status dos Arquivos SRO")
         
-        try:
-            # Verificar se arquivos existem
-            import os
-            files_status = {
-                "Embeddings_SRO.index": os.path.exists("Embeddings_SRO.index"),
-                "Dados_SRO.pkl": os.path.exists("Dados_SRO.pkl")
-            }
+        # Verificar e baixar arquivos se necessário
+        files_downloaded = download_sro_files()
+        
+        if files_downloaded:
+            files_status = check_files_status()
             
-            for file, exists in files_status.items():
-                icon = "✅" if exists else "❌"
-                st.write(f"{icon} {file}")
+            for file, status in files_status.items():
+                if status["exists"]:
+                    st.success(f"✅ {file} ({status['size_mb']} MB) - {status['source']}")
+                else:
+                    st.error(f"❌ {file} não encontrado")
             
-            all_files_exist = all(files_status.values())
-            
-        except:
+            all_files_exist = all(status["exists"] for status in files_status.values())
+        else:
             all_files_exist = False
-            st.error("❌ Arquivos SRO não encontrados")
+            st.error("❌ Falha no download dos arquivos SRO")
         
-        # Status geral
+        # Status geral do sistema
+        st.header("🚦 Status do Sistema")
         if all_files_exist and api_key:
             st.success("🟢 Sistema Pronto")
+        elif all_files_exist and not api_key:
+            st.warning("🟡 Configure API Key")
+        elif not all_files_exist and api_key:
+            st.warning("🟡 Arquivos em download")
         else:
-            st.warning("🟡 Configuração Incompleta")
+            st.error("🔴 Sistema não configurado")
     
-    # Verificar se pode prosseguir
+    # Verificar pré-requisitos
     if not api_key:
         st.error("🔑 Por favor, configure sua OpenAI API Key na barra lateral")
+        st.info("""
+        **Como obter uma API Key:**
+        1. Acesse: https://platform.openai.com/api-keys
+        2. Faça login na sua conta OpenAI
+        3. Clique em "Create new secret key"
+        4. Copie e cole a chave aqui
+        """)
         st.stop()
     
     if not all_files_exist:
-        st.error("📁 Arquivos SRO não encontrados. Certifique-se de que os arquivos estão no diretório correto.")
+        st.error("📁 Arquivos SRO não disponíveis")
+        st.info("""
+        **O que está acontecendo:**
+        - Os arquivos de embeddings estão sendo baixados automaticamente
+        - Este processo pode levar alguns minutos na primeira execução
+        - Aguarde o download completar ou verifique a configuração dos IDs no código
+        """)
+        
+        if st.button("🔄 Tentar Download Novamente"):
+            st.rerun()
+        
         st.stop()
     
     # Inicializar analyzer
     @st.cache_resource
-    def load_analyzer():
+    def load_analyzer(_api_key):
         analyzer = SROAnalyzer()
-        if analyzer.load_system(api_key):
+        if analyzer.load_system(_api_key):
             return analyzer
         return None
     
-    analyzer = load_analyzer()
+    with st.spinner("🤖 Carregando sistema de análise..."):
+        analyzer = load_analyzer(api_key)
     
     if analyzer is None:
         st.error("❌ Falha ao carregar o sistema SRO")
+        st.info("Verifique se os arquivos foram baixados corretamente e se a API Key está válida")
         st.stop()
     
     st.success("✅ Sistema SRO carregado com sucesso!")
+    st.info(f"📊 Base de dados: {len(analyzer.data_list)} reclamações históricas")
     
     # Interface principal
-    tab1, tab2 = st.tabs(["📤 Upload de Arquivo", "✍️ Texto Manual"])
+    tab1, tab2, tab3 = st.tabs(["📤 Upload de Arquivo", "✍️ Texto Manual", "ℹ️ Sobre"])
     
     with tab1:
         st.header("📤 Análise de Arquivo")
@@ -335,6 +463,53 @@ def main():
         
         if manual_text and st.button("🔍 Analisar Risco", key="analyze_manual"):
             analyze_text(analyzer, manual_text, "Texto Manual")
+    
+    with tab3:
+        st.header("ℹ️ Sobre o Sistema")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("🎯 Funcionalidades")
+            st.write("""
+            - **Análise de Risco**: Score de 0-100%
+            - **Classificação**: Alta/Média/Baixa/Nula
+            - **Busca Semântica**: IA para encontrar similares
+            - **Múltiplos Formatos**: PDF, Excel, JSON, TXT
+            - **Relatórios**: Download em JSON
+            """)
+            
+            st.subheader("🛠️ Tecnologia")
+            st.write("""
+            - **IA**: OpenAI Embeddings
+            - **Busca**: FAISS (Facebook AI)
+            - **Interface**: Streamlit
+            - **Base**: 30K+ reclamações históricas
+            """)
+        
+        with col2:
+            st.subheader("📊 Como Interpretar")
+            
+            # Tabela de interpretação
+            interpretation_data = {
+                "Score": ["80-100%", "60-79%", "30-59%", "0-29%"],
+                "Classificação": ["🔴 Alta", "🟠 Média", "🟡 Baixa", "🟢 Nula"],
+                "Ação": ["Imediata", "Monitoramento", "Observação", "Normal"]
+            }
+            
+            st.dataframe(
+                pd.DataFrame(interpretation_data),
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            st.subheader("🔗 Links Úteis")
+            st.write("""
+            - [OpenAI API](https://platform.openai.com/)
+            - [Documentação FAISS](https://faiss.ai/)
+            - [Streamlit Docs](https://docs.streamlit.io/)
+            """)
+
 
 def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
     """Função para analisar texto e mostrar resultados"""
