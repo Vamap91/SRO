@@ -51,56 +51,104 @@ def download_sro_files():
     
     # Verificar se precisa baixar o arquivo grande
     if not os.path.exists(embeddings_info["filename"]):
-        file_url = f"https://drive.google.com/uc?export=download&id={embeddings_info['id']}"
+        # Tentar diferentes URLs do Google Drive
+        urls_to_try = [
+            f"https://drive.google.com/uc?export=download&id={embeddings_info['id']}",
+            f"https://drive.google.com/uc?id={embeddings_info['id']}&export=download",
+            f"https://drive.usercontent.google.com/download?id={embeddings_info['id']}&export=download&authuser=0&confirm=t"
+        ]
         
         with st.spinner(f"📥 Baixando {embeddings_info['filename']} ({embeddings_info['size_mb']})..."):
-            try:
-                # Download com verificação
-                response = requests.get(file_url, stream=True)
-                response.raise_for_status()
-                
-                # Verificar se é um arquivo válido (não página de erro)
-                content_type = response.headers.get('content-type', '')
-                if 'text/html' in content_type:
-                    st.error(f"""
-                    ❌ **Erro de Download: {embeddings_info['filename']}**
+            download_success = False
+            
+            for i, file_url in enumerate(urls_to_try):
+                try:
+                    st.info(f"Tentativa {i+1}/3: Baixando do Google Drive...")
                     
-                    O arquivo não pôde ser baixado do Google Drive.
+                    # Fazer request inicial
+                    session = requests.Session()
+                    response = session.get(file_url, stream=True)
                     
-                    **Possíveis soluções:**
-                    1. Verifique se o arquivo está público (Anyone with the link can view)
-                    2. Teste o link manualmente: {file_url}
-                    3. ID atual: {embeddings_info['id']}
-                    """)
-                    return False
-                
-                # Salvar arquivo com progresso
-                total_size = int(response.headers.get('content-length', 0))
-                progress_bar = st.progress(0)
-                
-                with open(embeddings_info["filename"], 'wb') as f:
-                    downloaded = 0
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            if total_size > 0:
-                                progress = downloaded / total_size
-                                progress_bar.progress(progress)
-                
-                # Verificar se download foi bem-sucedido
-                if os.path.exists(embeddings_info["filename"]) and os.path.getsize(embeddings_info["filename"]) > 1000000:  # > 1MB
-                    st.success(f"✅ {embeddings_info['filename']} baixado com sucesso!")
-                    return True
-                else:
-                    st.error(f"❌ Falha no download de {embeddings_info['filename']}")
-                    return False
+                    # Verificar se precisa confirmar download (arquivos grandes)
+                    if 'download_warning' in response.text or 'virus scan warning' in response.text:
+                        # Extrair token de confirmação
+                        import re
+                        confirm_token = None
+                        for line in response.text.splitlines():
+                            if 'confirm=' in line:
+                                confirm_token = re.search(r'confirm=([^&]*)', line)
+                                if confirm_token:
+                                    confirm_token = confirm_token.group(1)
+                                    break
+                        
+                        if confirm_token:
+                            # Fazer download com confirmação
+                            params = {'id': embeddings_info['id'], 'confirm': confirm_token}
+                            response = session.get('https://drive.google.com/uc', params=params, stream=True)
                     
-            except requests.RequestException as e:
-                st.error(f"❌ Erro de rede ao baixar {embeddings_info['filename']}: {str(e)}")
-                return False
-            except Exception as e:
-                st.error(f"❌ Erro inesperado ao baixar {embeddings_info['filename']}: {str(e)}")
+                    response.raise_for_status()
+                    
+                    # Verificar se é um arquivo válido (não página de erro)
+                    content_type = response.headers.get('content-type', '')
+                    if 'text/html' in content_type and response.status_code == 200:
+                        # Pode ser página de confirmação, tentar próxima URL
+                        continue
+                    
+                    # Salvar arquivo com progresso
+                    total_size = int(response.headers.get('content-length', 0))
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    with open(embeddings_info["filename"], 'wb') as f:
+                        downloaded = 0
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                if total_size > 0:
+                                    progress = downloaded / total_size
+                                    progress_bar.progress(progress)
+                                    status_text.text(f"Baixado: {downloaded / (1024*1024):.1f} MB de {total_size / (1024*1024):.1f} MB")
+                    
+                    # Verificar se download foi bem-sucedido
+                    if os.path.exists(embeddings_info["filename"]) and os.path.getsize(embeddings_info["filename"]) > 10000000:  # > 10MB
+                        st.success(f"✅ {embeddings_info['filename']} baixado com sucesso!")
+                        download_success = True
+                        break
+                    else:
+                        st.warning(f"⚠️ Tentativa {i+1} falhou, tentando próxima URL...")
+                        if os.path.exists(embeddings_info["filename"]):
+                            os.remove(embeddings_info["filename"])
+                        
+                except requests.RequestException as e:
+                    st.warning(f"⚠️ Tentativa {i+1} falhou: {str(e)}")
+                    continue
+                except Exception as e:
+                    st.warning(f"⚠️ Tentativa {i+1} erro inesperado: {str(e)}")
+                    continue
+            
+            if not download_success:
+                st.error(f"""
+                ❌ **Falha no Download: {embeddings_info['filename']}**
+                
+                Não foi possível baixar o arquivo do Google Drive.
+                
+                **Soluções possíveis:**
+                
+                1. **Verificar permissões do Google Drive:**
+                   - Acesse: https://drive.google.com/file/d/{embeddings_info['id']}/view
+                   - Certifique-se que está definido como "Anyone with the link can view"
+                
+                2. **Download manual:**
+                   - Baixe o arquivo manualmente do link acima
+                   - Faça upload direto no repositório GitHub (usando Git LFS)
+                
+                3. **Arquivo muito grande:**
+                   - Google Drive pode bloquear downloads automáticos de arquivos > 100MB
+                   - Considere dividir o arquivo em partes menores
+                
+                **ID atual:** {embeddings_info['id']}
+                """)
                 return False
     else:
         st.info(f"📁 {embeddings_info['filename']} já existe localmente")
@@ -340,12 +388,18 @@ def main():
     with st.sidebar:
         st.header("⚙️ Configurações")
         
-        # Configuração da API Key
-        api_key = st.text_input(
-            "🔑 OpenAI API Key",
-            type="password",
-            help="Insira sua chave da API OpenAI"
-        )
+        # Verificar API Key nos secrets
+        try:
+            api_key = st.secrets["OPENAI_API_KEY"]
+            st.success("🔑 API Key carregada dos secrets")
+        except KeyError:
+            st.error("🔑 API Key não encontrada nos secrets")
+            st.info("""
+            **Configure nos Secrets do Streamlit:**
+            1. Vá em Settings > Secrets
+            2. Adicione: OPENAI_API_KEY = "sua_chave_aqui"
+            """)
+            api_key = None
         
         # Status dos arquivos
         st.header("📁 Status dos Arquivos SRO")
@@ -380,13 +434,16 @@ def main():
     
     # Verificar pré-requisitos
     if not api_key:
-        st.error("🔑 Por favor, configure sua OpenAI API Key na barra lateral")
+        st.error("🔑 API Key não configurada nos secrets do Streamlit")
         st.info("""
-        **Como obter uma API Key:**
-        1. Acesse: https://platform.openai.com/api-keys
-        2. Faça login na sua conta OpenAI
-        3. Clique em "Create new secret key"
-        4. Copie e cole a chave aqui
+        **Como configurar:**
+        1. Acesse as configurações da app no Streamlit Cloud
+        2. Vá em "Settings" > "Secrets"
+        3. Adicione:
+        ```toml
+        OPENAI_API_KEY = "sua_chave_openai_aqui"
+        ```
+        4. Salve e a app será reiniciada automaticamente
         """)
         st.stop()
     
