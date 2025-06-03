@@ -202,124 +202,7 @@ class SROAnalyzer:
             st.error(f"Erro ao carregar sistema: {str(e)}")
             return False
     
-    def analyze_sentiment_simple(self, text: str) -> Dict:
-        """Análise de sentimento simples baseada em palavras-chave (fallback)"""
-        # Palavras-chave positivas e negativas em português
-        positive_words = [
-            'gostei', 'obrigado', 'parabéns', 'excelente', 'ótimo', 'bom', 'satisfeito',
-            'agradecido', 'perfeito', 'maravilhoso', 'recomendo', 'feliz', 'contente',
-            'adorei', 'fantástico', 'incrível', 'sensacional', 'continuem', 'sucesso'
-        ]
-        
-        negative_words = [
-            'problema', 'erro', 'falha', 'ruim', 'péssimo', 'horrível', 'insatisfeito',
-            'reclamação', 'defeito', 'quebrado', 'não funciona', 'demora', 'lento',
-            'mal atendimento', 'decepção', 'frustração', 'raiva', 'indignado', 'revoltado'
-        ]
-        
-        text_lower = text.lower()
-        
-        # Contar palavras positivas e negativas
-        positive_count = sum(1 for word in positive_words if word in text_lower)
-        negative_count = sum(1 for word in negative_words if word in text_lower)
-        
-        # Calcular score baseado na contagem
-        if positive_count > negative_count:
-            if positive_count >= 3:
-                score = 0.8
-                label = "Muito Positivo"
-                color = "#00C851"
-            else:
-                score = 0.5
-                label = "Positivo"
-                color = "#4CAF50"
-        elif negative_count > positive_count:
-            if negative_count >= 3:
-                score = -0.8
-                label = "Muito Negativo"
-                color = "#FF4B4B"
-            else:
-                score = -0.5
-                label = "Negativo"
-                color = "#FF8C00"
-        else:
-            score = 0.0
-            label = "Neutro"
-            color = "#FFC107"
-        
-        return {
-            "score": score,
-            "label": label,
-            "color": color
-        }
-
-    def analyze_sentiment(self, text: str) -> Dict:
-        """Analisa sentimento do texto usando OpenAI com fallback"""
-        try:
-            # Tentar análise com OpenAI primeiro
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": """Analise o sentimento do texto em uma escala de -1 a +1:
--1: Muito negativo
-0: Neutro  
-+1: Muito positivo
-
-Responda APENAS com um número, exemplo: 0.7"""
-                    },
-                    {
-                        "role": "user",
-                        "content": text
-                    }
-                ],
-                temperature=0.1,
-                max_tokens=5,
-                timeout=10  # Timeout de 10 segundos
-            )
-            
-            # Tentar converter resposta para float
-            response_text = response.choices[0].message.content.strip()
-            
-            # Limpar possíveis caracteres extras
-            import re
-            numbers = re.findall(r'-?\d+\.?\d*', response_text)
-            
-            if numbers:
-                sentiment_score = float(numbers[0])
-                # Garantir que está no range correto
-                sentiment_score = max(-1.0, min(1.0, sentiment_score))
-                
-                # Classificar sentimento
-                if sentiment_score >= 0.5:
-                    sentiment_label = "Muito Positivo"
-                    sentiment_color = "#00C851"
-                elif sentiment_score >= 0.1:
-                    sentiment_label = "Positivo"
-                    sentiment_color = "#4CAF50"
-                elif sentiment_score >= -0.1:
-                    sentiment_label = "Neutro"
-                    sentiment_color = "#FFC107"
-                elif sentiment_score >= -0.5:
-                    sentiment_label = "Negativo"
-                    sentiment_color = "#FF8C00"
-                else:
-                    sentiment_label = "Muito Negativo"
-                    sentiment_color = "#FF4B4B"
-                
-                return {
-                    "score": sentiment_score,
-                    "label": sentiment_label,
-                    "color": sentiment_color
-                }
-            else:
-                raise ValueError("Não foi possível extrair número da resposta")
-            
-        except Exception as e:
-            # Fallback para análise simples
-            st.info(f"🔄 Usando análise de sentimento simplificada (OpenAI indisponível)")
-            return self.analyze_sentiment_simple(text)
+    def generate_embedding(self, text: str) -> Optional[List[float]]:
         """Gera embedding para um texto"""
         try:
             response = self.client.embeddings.create(
@@ -333,82 +216,30 @@ Responda APENAS com um número, exemplo: 0.7"""
     
     def analyze_sentiment_simple(self, text: str) -> Dict:
         """Análise de sentimento simples baseada em palavras-chave"""
-        # Palavras-chave positivas e negativas em português
-        positive_words = [
-            'gostei', 'obrigado', 'obrigada', 'parabéns', 'excelente', 'ótimo', 'bom', 'satisfeito',
-            'agradecido', 'perfeito', 'maravilhoso', 'recomendo', 'feliz', 'contente',
-            'adorei', 'fantástico', 'incrível', 'sensacional', 'continuem', 'sucesso',
-            'muito bom', 'top', 'show', 'massa', 'legal', 'bacana', 'amei'
-        ]
+        # Palavras positivas
+        positive_words = ['gostei', 'obrigado', 'obrigada', 'excelente', 'ótimo', 'bom', 'satisfeito', 'parabéns']
         
-        negative_words = [
-            'problema', 'erro', 'falha', 'ruim', 'péssimo', 'horrível', 'insatisfeito',
-            'reclamação', 'defeito', 'quebrado', 'não funciona', 'demora', 'lento',
-            'mal atendimento', 'decepção', 'frustração', 'raiva', 'indignado', 'revoltado',
-            'horrível', 'terrível', 'pior', 'odeio', 'detesto'
-        ]
+        # Palavras negativas  
+        negative_words = ['problema', 'erro', 'ruim', 'péssimo', 'insatisfeito', 'reclamação', 'defeito']
         
         text_lower = text.lower()
         
-        # Contar palavras positivas e negativas
         positive_count = sum(1 for word in positive_words if word in text_lower)
         negative_count = sum(1 for word in negative_words if word in text_lower)
         
-        # Calcular score baseado na contagem
         if positive_count > negative_count:
-            if positive_count >= 3:
-                score = 0.8
-                label = "Muito Positivo"
-                color = "#00C851"
-            elif positive_count >= 2:
-                score = 0.6
-                label = "Positivo"
-                color = "#4CAF50"
-            else:
-                score = 0.3
-                label = "Ligeiramente Positivo"
-                color = "#8BC34A"
+            return {"score": 0.7, "label": "Positivo", "color": "#4CAF50"}
         elif negative_count > positive_count:
-            if negative_count >= 3:
-                score = -0.8
-                label = "Muito Negativo"
-                color = "#FF4B4B"
-            elif negative_count >= 2:
-                score = -0.6
-                label = "Negativo"
-                color = "#FF8C00"
-            else:
-                score = -0.3
-                label = "Ligeiramente Negativo"
-                color = "#FFA726"
+            return {"score": -0.7, "label": "Negativo", "color": "#FF8C00"}
         else:
-            score = 0.0
-            label = "Neutro"
-            color = "#FFC107"
-        
-        return {
-            "score": score,
-            "label": label,
-            "color": color
-        }
-
+            return {"score": 0.0, "label": "Neutro", "color": "#FFC107"}
+    
     def analyze_risk(self, text: str, top_k: int = 10) -> Dict:
-        """Analisa risco de reclamação baseado em similaridade E sentimento"""
+        """Analisa risco de reclamação baseado em similaridade"""
         if not self.is_loaded:
             return {"error": "Sistema não carregado"}
         
-        # 1. ANÁLISE DE SENTIMENTO SIMPLIFICADA (LOCAL)
-        try:
-            sentiment = self.analyze_sentiment_simple(text)
-        except Exception as e:
-            # Fallback absoluto se tudo falhar
-            sentiment = {
-                "score": 0.0,
-                "label": "Neutro (Erro)",
-                "color": "#FFC107"
-            }
-        
-        # 2. GERAR EMBEDDING E BUSCAR SIMILARES
+        # Gerar embedding do texto
         embedding = self.generate_embedding(text)
         if embedding is None:
             return {"error": "Falha ao gerar embedding"}
@@ -424,37 +255,34 @@ Responda APENAS com um número, exemplo: 0.7"""
         max_similarity = float(similarities[0]) if len(similarities) > 0 else 0.0
         avg_similarity = float(np.mean(similarities))
         
-        # 3. CALCULAR SCORE DE RISCO AJUSTADO PELO SENTIMENTO
-        base_risk = max_similarity * 100  # Score baseado em similaridade
+        # Análise de sentimento
+        sentiment = self.analyze_sentiment_simple(text)
         
-        # Ajuste baseado no sentimento
-        if sentiment["score"] >= 0.3:  # Texto positivo
-            # Reduzir drasticamente o risco para textos positivos
-            sentiment_multiplier = 0.15  # Redução de 85%
-            adjusted_risk = base_risk * sentiment_multiplier
-            risk_explanation = "Risco reduzido devido ao sentimento positivo"
-            
-        elif sentiment["score"] <= -0.3:  # Texto negativo
-            # Manter ou aumentar ligeiramente o risco para textos negativos
-            sentiment_multiplier = 1.1  # Aumento de 10%
-            adjusted_risk = base_risk * sentiment_multiplier
-            risk_explanation = "Risco aumentado devido ao sentimento negativo"
-            
-        else:  # Texto neutro
-            adjusted_risk = base_risk * 0.7  # Redução moderada para textos neutros
-            risk_explanation = "Risco moderado para texto neutro"
+        # Calcular score de risco base
+        base_risk = max_similarity * 100
         
-        # Garantir que o score final está entre 0-100
-        final_risk_score = max(0, min(100, adjusted_risk))
+        # Ajuste SIMPLES baseado no sentimento
+        if sentiment["score"] > 0.5:  # Positivo
+            final_risk = base_risk * 0.3  # Reduz drasticamente
+            explanation = "Risco reduzido - sentimento positivo"
+        elif sentiment["score"] < -0.5:  # Negativo
+            final_risk = base_risk * 1.0  # Mantém risco
+            explanation = "Risco mantido - sentimento negativo"
+        else:  # Neutro
+            final_risk = base_risk * 0.7  # Reduz moderadamente
+            explanation = "Risco moderado - texto neutro"
         
-        # 4. CLASSIFICAR RISCO FINAL
-        if final_risk_score >= 80:
+        # Garantir range 0-100
+        final_risk = max(0, min(100, final_risk))
+        
+        # Classificar risco
+        if final_risk >= 80:
             risk_level = "Alta"
             risk_color = "#FF4B4B"
-        elif final_risk_score >= 60:
+        elif final_risk >= 60:
             risk_level = "Média"
             risk_color = "#FF8C00"
-        elif final_risk_score >= 30:
+        elif final_risk >= 30:
             risk_level = "Baixa"
             risk_color = "#FFD700"
         else:
@@ -471,12 +299,12 @@ Responda APENAS com um número, exemplo: 0.7"""
                 similar_complaints.append(item)
         
         return {
-            "risk_score": final_risk_score,
+            "risk_score": final_risk,
             "risk_level": risk_level,
             "risk_color": risk_color,
             "sentiment": sentiment,
             "base_risk": base_risk,
-            "risk_explanation": risk_explanation,
+            "explanation": explanation,
             "max_similarity": max_similarity,
             "avg_similarity": avg_similarity,
             "similar_complaints": similar_complaints,
@@ -489,7 +317,6 @@ def extract_text_from_file(uploaded_file) -> str:
         file_type = uploaded_file.type
         
         if file_type == "application/pdf":
-            # Extrair texto de PDF
             pdf_reader = PyPDF2.PdfReader(uploaded_file)
             text = ""
             for page in pdf_reader.pages:
@@ -498,43 +325,29 @@ def extract_text_from_file(uploaded_file) -> str:
             
         elif file_type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
                           "application/vnd.ms-excel"]:
-            # Extrair texto de Excel
-            df = pd.read_excel(uploaded_file, header=None)  # SEM assumir cabeçalhos
-            
-            # Verificar se arquivo tem dados
-            if df.empty:
-                return "Arquivo Excel vazio"
-            
-            # Extrair todo o texto das células
+            df = pd.read_excel(uploaded_file, header=None)
             text_parts = []
             
             for index, row in df.iterrows():
-                for col_idx, cell_value in enumerate(row):
+                for cell_value in row:
                     if pd.notna(cell_value) and str(cell_value).strip():
-                        # Limpar texto da célula
                         cell_text = str(cell_value).strip()
-                        # Remover aspas extras se existirem
                         if cell_text.startswith('"') and cell_text.endswith('"'):
                             cell_text = cell_text[1:-1]
                         text_parts.append(cell_text)
             
-            # Juntar todos os textos
             combined_text = " | ".join(text_parts)
-            
-            # Limitar tamanho se muito grande
             if len(combined_text) > 3000:
                 combined_text = combined_text[:3000] + "..."
             
             return combined_text
             
         elif file_type == "application/json":
-            # Extrair texto de JSON
             json_data = json.load(uploaded_file)
             text = json.dumps(json_data, ensure_ascii=False, indent=2)
             return text
             
         elif file_type == "text/plain":
-            # Arquivo de texto
             return str(uploaded_file.read(), "utf-8")
             
         else:
@@ -546,11 +359,10 @@ def extract_text_from_file(uploaded_file) -> str:
 def create_risk_gauge(risk_score: float, risk_level: str, risk_color: str):
     """Cria gauge de risco"""
     fig = go.Figure(go.Indicator(
-        mode = "gauge+number+delta",
+        mode = "gauge+number",
         value = risk_score,
         domain = {'x': [0, 1], 'y': [0, 1]},
         title = {'text': "Risco de Reclamação"},
-        delta = {'reference': 50},
         gauge = {
             'axis': {'range': [None, 100]},
             'bar': {'color': risk_color},
@@ -568,11 +380,7 @@ def create_risk_gauge(risk_score: float, risk_level: str, risk_color: str):
         }
     ))
     
-    fig.update_layout(
-        height=300,
-        font={'color': "darkblue", 'family': "Arial"}
-    )
-    
+    fig.update_layout(height=300)
     return fig
 
 def create_similarity_chart(similar_complaints: List[Dict]):
@@ -580,7 +388,7 @@ def create_similarity_chart(similar_complaints: List[Dict]):
     if not similar_complaints:
         return None
     
-    df = pd.DataFrame(similar_complaints[:5])  # Top 5
+    df = pd.DataFrame(similar_complaints[:5])
     
     fig = px.bar(
         df, 
@@ -610,6 +418,89 @@ def download_report(analysis_result: Dict, original_text: str) -> str:
     }
     
     return json.dumps(report, ensure_ascii=False, indent=2)
+
+def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
+    """Função para analisar texto e mostrar resultados"""
+    
+    with st.spinner("🤖 Analisando risco de reclamação..."):
+        result = analyzer.analyze_risk(text, top_k=10)
+    
+    if "error" in result:
+        st.error(f"❌ {result['error']}")
+        return
+    
+    # Layout em colunas
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("📊 Resultado da Análise")
+        
+        # Mostrar sentimento
+        st.write(f"**🎭 Sentimento:** {result['sentiment']['label']}")
+        
+        # Gauge de risco
+        gauge_fig = create_risk_gauge(
+            result["risk_score"], 
+            result["risk_level"], 
+            result["risk_color"]
+        )
+        st.plotly_chart(gauge_fig, use_container_width=True)
+        
+        # Métricas
+        st.metric("📈 Score de Risco", f"{result['risk_score']:.1f}%")
+        st.metric("🏷️ Classificação", result["risk_level"])
+        st.info(result["explanation"])
+    
+    with col2:
+        st.subheader("📈 Análise de Similaridade")
+        
+        # Gráfico de similaridade
+        if result["similar_complaints"]:
+            sim_chart = create_similarity_chart(result["similar_complaints"])
+            if sim_chart:
+                st.plotly_chart(sim_chart, use_container_width=True)
+        
+        # Estatísticas
+        st.write("**📊 Estatísticas:**")
+        st.write(f"• Reclamações analisadas: {result['total_analyzed']}")
+        st.write(f"• Similaridade média: {result['avg_similarity']:.3f}")
+    
+    # Detalhes das reclamações similares
+    st.subheader("🔍 Reclamações Similares Encontradas")
+    
+    if result["similar_complaints"]:
+        for i, complaint in enumerate(result["similar_complaints"][:5]):
+            with st.expander(f"#{i+1} - Similaridade: {complaint['similaridade']:.1%}"):
+                st.write("**Reclamação:**")
+                st.write(complaint['reclamacao'])
+                st.write("**Solução:**")
+                st.write(complaint['solucao'])
+    else:
+        st.info("Nenhuma reclamação similar encontrada")
+    
+    # Download do relatório
+    st.subheader("📥 Download do Relatório")
+    
+    report_json = download_report(result, text)
+    
+    st.download_button(
+        label="📄 Baixar Relatório JSON",
+        data=report_json,
+        file_name=f"relatorio_risco_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+        mime="application/json"
+    )
+    
+    # Recomendações
+    st.subheader("💡 Recomendações")
+    
+    if result["risk_score"] >= 80:
+        st.error("🚨 **RISCO ALTO**: Atenção imediata necessária!")
+    elif result["risk_score"] >= 60:
+        st.warning("⚠️ **RISCO MÉDIO**: Monitoramento recomendado!")
+    elif result["risk_score"] >= 30:
+        st.info("ℹ️ **RISCO BAIXO**: Monitoramento regular!")
+    else:
+        st.success("✅ **RISCO NULO**: Situação controlada!")
 
 # Interface Streamlit
 def main():
@@ -669,30 +560,12 @@ def main():
     # Verificar pré-requisitos
     if not api_key:
         st.error("🔑 API Key não configurada nos secrets do Streamlit")
-        st.info("""
-        **Como configurar:**
-        1. Acesse as configurações da app no Streamlit Cloud
-        2. Vá em "Settings" > "Secrets"
-        3. Adicione:
-        ```toml
-        OPENAI_API_KEY = "sua_chave_openai_aqui"
-        ```
-        4. Salve e a app será reiniciada automaticamente
-        """)
         st.stop()
     
     if not all_files_exist:
         st.error("📁 Arquivos SRO não disponíveis")
-        st.info("""
-        **O que está acontecendo:**
-        - Os arquivos de embeddings estão sendo baixados automaticamente
-        - Este processo pode levar alguns minutos na primeira execução
-        - Aguarde o download completar ou verifique a configuração dos IDs no código
-        """)
-        
         if st.button("🔄 Tentar Download Novamente"):
             st.rerun()
-        
         st.stop()
     
     # Inicializar analyzer
@@ -708,14 +581,13 @@ def main():
     
     if analyzer is None:
         st.error("❌ Falha ao carregar o sistema SRO")
-        st.info("Verifique se os arquivos foram baixados corretamente e se a API Key está válida")
         st.stop()
     
     st.success("✅ Sistema SRO carregado com sucesso!")
     st.info(f"📊 Base de dados: {len(analyzer.data_list)} reclamações históricas")
     
     # Interface principal
-    tab1, tab2, tab3 = st.tabs(["📤 Upload de Arquivo", "✍️ Texto Manual", "ℹ️ Sobre"])
+    tab1, tab2 = st.tabs(["📤 Upload de Arquivo", "✍️ Texto Manual"])
     
     with tab1:
         st.header("📤 Análise de Arquivo")
@@ -754,205 +626,6 @@ def main():
         
         if manual_text and st.button("🔍 Analisar Risco", key="analyze_manual"):
             analyze_text(analyzer, manual_text, "Texto Manual")
-    
-    with tab3:
-        st.header("ℹ️ Sobre o Sistema")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("🎯 Funcionalidades")
-            st.write("""
-            - **Análise de Risco**: Score de 0-100%
-            - **Classificação**: Alta/Média/Baixa/Nula
-            - **Busca Semântica**: IA para encontrar similares
-            - **Múltiplos Formatos**: PDF, Excel, JSON, TXT
-            - **Relatórios**: Download em JSON
-            """)
-            
-            st.subheader("🛠️ Tecnologia")
-            st.write("""
-            - **IA**: OpenAI Embeddings
-            - **Busca**: FAISS (Facebook AI)
-            - **Interface**: Streamlit
-            - **Base**: 30K+ reclamações históricas
-            """)
-        
-        with col2:
-            st.subheader("📊 Como Interpretar")
-            
-            # Tabela de interpretação
-            interpretation_data = {
-                "Score": ["80-100%", "60-79%", "30-59%", "0-29%"],
-                "Classificação": ["🔴 Alta", "🟠 Média", "🟡 Baixa", "🟢 Nula"],
-                "Ação": ["Imediata", "Monitoramento", "Observação", "Normal"]
-            }
-            
-            st.dataframe(
-                pd.DataFrame(interpretation_data),
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            st.subheader("🔗 Links Úteis")
-            st.write("""
-            - [OpenAI API](https://platform.openai.com/)
-            - [Documentação FAISS](https://faiss.ai/)
-            - [Streamlit Docs](https://docs.streamlit.io/)
-            """)
-
-
-def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
-    """Função para analisar texto e mostrar resultados"""
-    
-    with st.spinner("🤖 Analisando risco de reclamação..."):
-        result = analyzer.analyze_risk(text, top_k=10)
-    
-    if "error" in result:
-        st.error(f"❌ {result['error']}")
-        return
-    
-    # Verificar se sentiment existe no resultado
-    if "sentiment" not in result:
-        st.error("❌ Erro na análise de sentimento")
-        return
-    
-    # Layout em colunas
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.subheader("📊 Resultado da Análise")
-        
-        # Mostrar análise de sentimento
-        st.write("**🎭 Análise de Sentimento:**")
-        sentiment_col1, sentiment_col2 = st.columns([1, 2])
-        
-        with sentiment_col1:
-            # Mostrar score de sentimento
-            sentiment_score = result["sentiment"]["score"]
-            st.metric(
-                "Sentimento", 
-                f"{sentiment_score:+.2f}",
-                help="Escala: -1 (muito negativo) a +1 (muito positivo)"
-            )
-        
-        with sentiment_col2:
-            # Mostrar classificação do sentimento
-            st.markdown(f"""
-            <div style="padding: 0.5rem; border-radius: 0.5rem; background-color: {result['sentiment']['color']}20; border-left: 4px solid {result['sentiment']['color']};">
-                <strong style="color: {result['sentiment']['color']};">{result['sentiment']['label']}</strong>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-        # Gauge de risco
-        gauge_fig = create_risk_gauge(
-            result["risk_score"], 
-            result["risk_level"], 
-            result["risk_color"]
-        )
-        st.plotly_chart(gauge_fig, use_container_width=True)
-        
-        # Métricas principais
-        st.metric("📈 Score de Risco Final", f"{result['risk_score']:.1f}%")
-        st.metric("🏷️ Classificação", result["risk_level"])
-        
-        # Explicação do ajuste (se disponível)
-        if "risk_explanation" in result:
-            st.info(f"ℹ️ {result['risk_explanation']}")
-        
-        # Métricas técnicas em expander
-        with st.expander("🔧 Detalhes Técnicos"):
-            col_tech1, col_tech2 = st.columns(2)
-            with col_tech1:
-                if "base_risk" in result:
-                    st.metric("📊 Risco Base (Similaridade)", f"{result['base_risk']:.1f}%")
-                st.metric("🔗 Similaridade Máxima", f"{result['max_similarity']:.3f}")
-            with col_tech2:
-                st.metric("📊 Similaridade Média", f"{result['avg_similarity']:.3f}")
-                st.metric("🔍 Reclamações Analisadas", result['total_analyzed'])
-    
-    with col2:
-        st.subheader("📈 Análise de Similaridade")
-        
-        # Gráfico de similaridade
-        if result["similar_complaints"]:
-            sim_chart = create_similarity_chart(result["similar_complaints"])
-            if sim_chart:
-                st.plotly_chart(sim_chart, use_container_width=True)
-        
-        # Estatísticas
-        st.write("**📊 Estatísticas:**")
-        st.write(f"• Reclamações analisadas: {result['total_analyzed']}")
-        st.write(f"• Similaridade média: {result['avg_similarity']:.3f}")
-    
-    # Detalhes das reclamações similares
-    st.subheader("🔍 Reclamações Similares Encontradas")
-    
-    if result["similar_complaints"]:
-        for i, complaint in enumerate(result["similar_complaints"][:5]):
-            with st.expander(f"#{i+1} - Similaridade: {complaint['similaridade']:.1%}"):
-                st.write("**Reclamação:**")
-                st.write(complaint['reclamacao'])
-                st.write("**Solução:**")
-                st.write(complaint['solucao'])
-    else:
-        st.info("Nenhuma reclamação similar encontrada")
-    
-    # Download do relatório
-    st.subheader("📥 Download do Relatório")
-    
-    report_json = download_report(result, text)
-    
-    st.download_button(
-        label="📄 Baixar Relatório JSON",
-        data=report_json,
-        file_name=f"relatorio_risco_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-        mime="application/json"
-    )
-    
-    # Recomendações inteligentes baseadas em sentimento
-    st.subheader("💡 Recomendações")
-    
-    # Verificar se campos de sentimento existem
-    if "sentiment" in result and "score" in result["sentiment"]:
-        sentiment_score = result["sentiment"]["score"]
-        risk_score = result["risk_score"]
-        
-        if sentiment_score >= 0.3:  # Texto positivo
-            if risk_score < 30:
-                st.success("🌟 **FEEDBACK POSITIVO**: Este é um elogio! Considere usar como case de sucesso ou testimônio.")
-            else:
-                st.info("🤔 **ANÁLISE MISTA**: Sentimento positivo com alta similaridade a reclamações. Verifique contexto.")
-        
-        elif sentiment_score <= -0.3:  # Texto negativo
-            if risk_score >= 80:
-                st.error("🚨 **RISCO CRÍTICO**: Sentimento negativo + alta similaridade. Ação imediata necessária!")
-            elif risk_score >= 60:
-                st.warning("⚠️ **RISCO ELEVADO**: Monitoramento contínuo e ações preventivas recomendadas.")
-            elif risk_score >= 30:
-                st.info("📋 **ATENÇÃO**: Sentimento negativo, mas baixa similaridade. Investigar contexto específico.")
-            else:
-                st.success("✅ **RISCO CONTROLADO**: Apesar do tom, baixa probabilidade de reclamação formal.")
-        
-        else:  # Texto neutro
-            if risk_score >= 80:
-                st.warning("⚠️ **RISCO MODERADO**: Texto neutro com alta similaridade. Monitoramento recomendado.")
-            elif risk_score >= 60:
-                st.info("ℹ️ **OBSERVAÇÃO**: Monitoramento regular suficiente.")
-            else:
-                st.success("✅ **SITUAÇÃO NORMAL**: Procedimentos padrão adequados.")
-    else:
-        # Fallback para recomendações básicas se sentimento não disponível
-        if result["risk_score"] >= 80:
-            st.error("🚨 **RISCO ALTO**: Atenção imediata necessária. Implementar medidas preventivas urgentes.")
-        elif result["risk_score"] >= 60:
-            st.warning("⚠️ **RISCO MÉDIO**: Monitoramento contínuo recomendado. Considerar ações preventivas.")
-        elif result["risk_score"] >= 30:
-            st.info("ℹ️ **RISCO BAIXO**: Monitoramento regular suficiente.")
-        else:
-            st.success("✅ **RISCO NULO**: Situação controlada. Manter procedimentos padrão.")
 
 if __name__ == "__main__":
     main()
