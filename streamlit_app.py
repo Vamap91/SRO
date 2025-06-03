@@ -230,7 +230,18 @@ Responda APENAS com um número decimal entre -1 e +1, exemplo: 0.7"""
                 max_tokens=10
             )
             
-            sentiment_score = float(response.choices[0].message.content.strip())
+            # Tentar converter resposta para float
+            response_text = response.choices[0].message.content.strip()
+            
+            # Limpar possíveis caracteres extras
+            import re
+            numbers = re.findall(r'-?\d+\.?\d*', response_text)
+            
+            if numbers:
+                sentiment_score = float(numbers[0])
+            else:
+                # Se não conseguir extrair número, assumir neutro
+                sentiment_score = 0.0
             
             # Garantir que está no range correto
             sentiment_score = max(-1.0, min(1.0, sentiment_score))
@@ -259,11 +270,11 @@ Responda APENAS com um número decimal entre -1 e +1, exemplo: 0.7"""
             }
             
         except Exception as e:
-            st.warning(f"Erro na análise de sentimento: {str(e)}")
+            st.warning(f"Erro na análise de sentimento: {str(e)}. Usando análise neutro.")
             # Retornar neutro em caso de erro
             return {
                 "score": 0.0,
-                "label": "Neutro",
+                "label": "Neutro (Erro)",
                 "color": "#FFC107"
             }
         """Gera embedding para um texto"""
@@ -667,6 +678,11 @@ def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
         st.error(f"❌ {result['error']}")
         return
     
+    # Verificar se sentiment existe no resultado
+    if "sentiment" not in result:
+        st.error("❌ Erro na análise de sentimento")
+        return
+    
     # Layout em colunas
     col1, col2 = st.columns([1, 1])
     
@@ -708,14 +724,16 @@ def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
         st.metric("📈 Score de Risco Final", f"{result['risk_score']:.1f}%")
         st.metric("🏷️ Classificação", result["risk_level"])
         
-        # Explicação do ajuste
-        st.info(f"ℹ️ {result['risk_explanation']}")
+        # Explicação do ajuste (se disponível)
+        if "risk_explanation" in result:
+            st.info(f"ℹ️ {result['risk_explanation']}")
         
         # Métricas técnicas em expander
         with st.expander("🔧 Detalhes Técnicos"):
             col_tech1, col_tech2 = st.columns(2)
             with col_tech1:
-                st.metric("📊 Risco Base (Similaridade)", f"{result['base_risk']:.1f}%")
+                if "base_risk" in result:
+                    st.metric("📊 Risco Base (Similaridade)", f"{result['base_risk']:.1f}%")
                 st.metric("🔗 Similaridade Máxima", f"{result['max_similarity']:.3f}")
             with col_tech2:
                 st.metric("📊 Similaridade Média", f"{result['avg_similarity']:.3f}")
@@ -763,32 +781,44 @@ def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
     # Recomendações inteligentes baseadas em sentimento
     st.subheader("💡 Recomendações")
     
-    sentiment_score = result["sentiment"]["score"]
-    risk_score = result["risk_score"]
-    
-    if sentiment_score >= 0.3:  # Texto positivo
-        if risk_score < 30:
-            st.success("🌟 **FEEDBACK POSITIVO**: Este é um elogio! Considere usar como case de sucesso ou testimônio.")
+    # Verificar se campos de sentimento existem
+    if "sentiment" in result and "score" in result["sentiment"]:
+        sentiment_score = result["sentiment"]["score"]
+        risk_score = result["risk_score"]
+        
+        if sentiment_score >= 0.3:  # Texto positivo
+            if risk_score < 30:
+                st.success("🌟 **FEEDBACK POSITIVO**: Este é um elogio! Considere usar como case de sucesso ou testimônio.")
+            else:
+                st.info("🤔 **ANÁLISE MISTA**: Sentimento positivo com alta similaridade a reclamações. Verifique contexto.")
+        
+        elif sentiment_score <= -0.3:  # Texto negativo
+            if risk_score >= 80:
+                st.error("🚨 **RISCO CRÍTICO**: Sentimento negativo + alta similaridade. Ação imediata necessária!")
+            elif risk_score >= 60:
+                st.warning("⚠️ **RISCO ELEVADO**: Monitoramento contínuo e ações preventivas recomendadas.")
+            elif risk_score >= 30:
+                st.info("📋 **ATENÇÃO**: Sentimento negativo, mas baixa similaridade. Investigar contexto específico.")
+            else:
+                st.success("✅ **RISCO CONTROLADO**: Apesar do tom, baixa probabilidade de reclamação formal.")
+        
+        else:  # Texto neutro
+            if risk_score >= 80:
+                st.warning("⚠️ **RISCO MODERADO**: Texto neutro com alta similaridade. Monitoramento recomendado.")
+            elif risk_score >= 60:
+                st.info("ℹ️ **OBSERVAÇÃO**: Monitoramento regular suficiente.")
+            else:
+                st.success("✅ **SITUAÇÃO NORMAL**: Procedimentos padrão adequados.")
+    else:
+        # Fallback para recomendações básicas se sentimento não disponível
+        if result["risk_score"] >= 80:
+            st.error("🚨 **RISCO ALTO**: Atenção imediata necessária. Implementar medidas preventivas urgentes.")
+        elif result["risk_score"] >= 60:
+            st.warning("⚠️ **RISCO MÉDIO**: Monitoramento contínuo recomendado. Considerar ações preventivas.")
+        elif result["risk_score"] >= 30:
+            st.info("ℹ️ **RISCO BAIXO**: Monitoramento regular suficiente.")
         else:
-            st.info("🤔 **ANÁLISE MISTA**: Sentimento positivo com alta similaridade a reclamações. Verifique contexto.")
-    
-    elif sentiment_score <= -0.3:  # Texto negativo
-        if risk_score >= 80:
-            st.error("🚨 **RISCO CRÍTICO**: Sentimento negativo + alta similaridade. Ação imediata necessária!")
-        elif risk_score >= 60:
-            st.warning("⚠️ **RISCO ELEVADO**: Monitoramento contínuo e ações preventivas recomendadas.")
-        elif risk_score >= 30:
-            st.info("📋 **ATENÇÃO**: Sentimento negativo, mas baixa similaridade. Investigar contexto específico.")
-        else:
-            st.success("✅ **RISCO CONTROLADO**: Apesar do tom, baixa probabilidade de reclamação formal.")
-    
-    else:  # Texto neutro
-        if risk_score >= 80:
-            st.warning("⚠️ **RISCO MODERADO**: Texto neutro com alta similaridade. Monitoramento recomendado.")
-        elif risk_score >= 60:
-            st.info("ℹ️ **OBSERVAÇÃO**: Monitoramento regular suficiente.")
-        else:
-            st.success("✅ **SITUAÇÃO NORMAL**: Procedimentos padrão adequados.")
+            st.success("✅ **RISCO NULO**: Situação controlada. Manter procedimentos padrão.")
 
 if __name__ == "__main__":
     main()
