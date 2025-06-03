@@ -336,8 +336,9 @@ Responda APENAS com um número, exemplo: 0.7"""
         if not self.is_loaded:
             return {"error": "Sistema não carregado"}
         
-        # 1. ANÁLISE DE SENTIMENTO
-        sentiment = self.analyze_sentiment(text)
+        # 1. ANÁLISE DE SENTIMENTO SIMPLIFICADA (SEM OpenAI)
+        # Usando apenas análise por palavras-chave para evitar erros de API
+        sentiment = self.analyze_sentiment_simple(text)
         
         # 2. GERAR EMBEDDING E BUSCAR SIMILARES
         embedding = self.generate_embedding(text)
@@ -361,18 +362,18 @@ Responda APENAS com um número, exemplo: 0.7"""
         # Ajuste baseado no sentimento
         if sentiment["score"] >= 0.3:  # Texto positivo
             # Reduzir drasticamente o risco para textos positivos
-            sentiment_multiplier = max(0.1, 1 - abs(sentiment["score"]))  # 0.1 a 0.7
+            sentiment_multiplier = 0.15  # Redução de 85%
             adjusted_risk = base_risk * sentiment_multiplier
             risk_explanation = "Risco reduzido devido ao sentimento positivo"
             
         elif sentiment["score"] <= -0.3:  # Texto negativo
             # Manter ou aumentar ligeiramente o risco para textos negativos
-            sentiment_multiplier = min(1.2, 1 + abs(sentiment["score"]) * 0.3)  # 1.0 a 1.2
+            sentiment_multiplier = 1.1  # Aumento de 10%
             adjusted_risk = base_risk * sentiment_multiplier
             risk_explanation = "Risco aumentado devido ao sentimento negativo"
             
         else:  # Texto neutro
-            adjusted_risk = base_risk * 0.8  # Redução moderada para textos neutros
+            adjusted_risk = base_risk * 0.7  # Redução moderada para textos neutros
             risk_explanation = "Risco moderado para texto neutro"
         
         # Garantir que o score final está entre 0-100
