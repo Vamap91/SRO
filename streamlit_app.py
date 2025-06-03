@@ -302,7 +302,7 @@ class SROAnalyzer:
             "risk_score": final_risk,
             "risk_level": risk_level,
             "risk_color": risk_color,
-            "sentiment": sentiment,
+            "sentiment": sentiment,  # ✅ Adicionado sentiment
             "base_risk": base_risk,
             "explanation": explanation,
             "max_similarity": max_similarity,
@@ -429,14 +429,20 @@ def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
         st.error(f"❌ {result['error']}")
         return
     
+    # Debug: Verificar estrutura do resultado
+    st.write("DEBUG - Chaves do resultado:", list(result.keys()))
+    
     # Layout em colunas
     col1, col2 = st.columns([1, 1])
     
     with col1:
         st.subheader("📊 Resultado da Análise")
         
-        # Mostrar sentimento
-        st.write(f"**🎭 Sentimento:** {result['sentiment']['label']}")
+        # Mostrar sentimento - com verificação
+        if "sentiment" in result and "label" in result["sentiment"]:
+            st.write(f"**🎭 Sentimento:** {result['sentiment']['label']}")
+        else:
+            st.write("**🎭 Sentimento:** Não disponível")
         
         # Gauge de risco
         gauge_fig = create_risk_gauge(
@@ -449,7 +455,9 @@ def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
         # Métricas
         st.metric("📈 Score de Risco", f"{result['risk_score']:.1f}%")
         st.metric("🏷️ Classificação", result["risk_level"])
-        st.info(result["explanation"])
+        
+        if "explanation" in result:
+            st.info(result["explanation"])
     
     with col2:
         st.subheader("📈 Análise de Similaridade")
