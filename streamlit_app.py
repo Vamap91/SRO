@@ -499,11 +499,33 @@ def extract_text_from_file(uploaded_file) -> str:
         elif file_type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
                           "application/vnd.ms-excel"]:
             # Extrair texto de Excel
-            df = pd.read_excel(uploaded_file)
-            text = ""
-            for col in df.columns:
-                text += f"{col}: {' '.join(df[col].astype(str).tolist())}\n"
-            return text
+            df = pd.read_excel(uploaded_file, header=None)  # SEM assumir cabeçalhos
+            
+            # Verificar se arquivo tem dados
+            if df.empty:
+                return "Arquivo Excel vazio"
+            
+            # Extrair todo o texto das células
+            text_parts = []
+            
+            for index, row in df.iterrows():
+                for col_idx, cell_value in enumerate(row):
+                    if pd.notna(cell_value) and str(cell_value).strip():
+                        # Limpar texto da célula
+                        cell_text = str(cell_value).strip()
+                        # Remover aspas extras se existirem
+                        if cell_text.startswith('"') and cell_text.endswith('"'):
+                            cell_text = cell_text[1:-1]
+                        text_parts.append(cell_text)
+            
+            # Juntar todos os textos
+            combined_text = " | ".join(text_parts)
+            
+            # Limitar tamanho se muito grande
+            if len(combined_text) > 3000:
+                combined_text = combined_text[:3000] + "..."
+            
+            return combined_text
             
         elif file_type == "application/json":
             # Extrair texto de JSON
