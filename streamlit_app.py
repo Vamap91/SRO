@@ -331,14 +331,82 @@ Responda APENAS com um número, exemplo: 0.7"""
             st.error(f"Erro ao gerar embedding: {str(e)}")
             return None
     
+    def analyze_sentiment_simple(self, text: str) -> Dict:
+        """Análise de sentimento simples baseada em palavras-chave"""
+        # Palavras-chave positivas e negativas em português
+        positive_words = [
+            'gostei', 'obrigado', 'obrigada', 'parabéns', 'excelente', 'ótimo', 'bom', 'satisfeito',
+            'agradecido', 'perfeito', 'maravilhoso', 'recomendo', 'feliz', 'contente',
+            'adorei', 'fantástico', 'incrível', 'sensacional', 'continuem', 'sucesso',
+            'muito bom', 'top', 'show', 'massa', 'legal', 'bacana', 'amei'
+        ]
+        
+        negative_words = [
+            'problema', 'erro', 'falha', 'ruim', 'péssimo', 'horrível', 'insatisfeito',
+            'reclamação', 'defeito', 'quebrado', 'não funciona', 'demora', 'lento',
+            'mal atendimento', 'decepção', 'frustração', 'raiva', 'indignado', 'revoltado',
+            'horrível', 'terrível', 'pior', 'odeio', 'detesto'
+        ]
+        
+        text_lower = text.lower()
+        
+        # Contar palavras positivas e negativas
+        positive_count = sum(1 for word in positive_words if word in text_lower)
+        negative_count = sum(1 for word in negative_words if word in text_lower)
+        
+        # Calcular score baseado na contagem
+        if positive_count > negative_count:
+            if positive_count >= 3:
+                score = 0.8
+                label = "Muito Positivo"
+                color = "#00C851"
+            elif positive_count >= 2:
+                score = 0.6
+                label = "Positivo"
+                color = "#4CAF50"
+            else:
+                score = 0.3
+                label = "Ligeiramente Positivo"
+                color = "#8BC34A"
+        elif negative_count > positive_count:
+            if negative_count >= 3:
+                score = -0.8
+                label = "Muito Negativo"
+                color = "#FF4B4B"
+            elif negative_count >= 2:
+                score = -0.6
+                label = "Negativo"
+                color = "#FF8C00"
+            else:
+                score = -0.3
+                label = "Ligeiramente Negativo"
+                color = "#FFA726"
+        else:
+            score = 0.0
+            label = "Neutro"
+            color = "#FFC107"
+        
+        return {
+            "score": score,
+            "label": label,
+            "color": color
+        }
+
     def analyze_risk(self, text: str, top_k: int = 10) -> Dict:
         """Analisa risco de reclamação baseado em similaridade E sentimento"""
         if not self.is_loaded:
             return {"error": "Sistema não carregado"}
         
-        # 1. ANÁLISE DE SENTIMENTO SIMPLIFICADA (SEM OpenAI)
-        # Usando apenas análise por palavras-chave para evitar erros de API
-        sentiment = self.analyze_sentiment_simple(text)
+        # 1. ANÁLISE DE SENTIMENTO SIMPLIFICADA (LOCAL)
+        try:
+            sentiment = self.analyze_sentiment_simple(text)
+        except Exception as e:
+            # Fallback absoluto se tudo falhar
+            sentiment = {
+                "score": 0.0,
+                "label": "Neutro (Erro)",
+                "color": "#FFC107"
+            }
         
         # 2. GERAR EMBEDDING E BUSCAR SIMILARES
         embedding = self.generate_embedding(text)
