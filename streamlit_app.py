@@ -202,32 +202,81 @@ class SROAnalyzer:
             st.error(f"Erro ao carregar sistema: {str(e)}")
             return False
     
+    def analyze_sentiment_simple(self, text: str) -> Dict:
+        """Análise de sentimento simples baseada em palavras-chave (fallback)"""
+        # Palavras-chave positivas e negativas em português
+        positive_words = [
+            'gostei', 'obrigado', 'parabéns', 'excelente', 'ótimo', 'bom', 'satisfeito',
+            'agradecido', 'perfeito', 'maravilhoso', 'recomendo', 'feliz', 'contente',
+            'adorei', 'fantástico', 'incrível', 'sensacional', 'continuem', 'sucesso'
+        ]
+        
+        negative_words = [
+            'problema', 'erro', 'falha', 'ruim', 'péssimo', 'horrível', 'insatisfeito',
+            'reclamação', 'defeito', 'quebrado', 'não funciona', 'demora', 'lento',
+            'mal atendimento', 'decepção', 'frustração', 'raiva', 'indignado', 'revoltado'
+        ]
+        
+        text_lower = text.lower()
+        
+        # Contar palavras positivas e negativas
+        positive_count = sum(1 for word in positive_words if word in text_lower)
+        negative_count = sum(1 for word in negative_words if word in text_lower)
+        
+        # Calcular score baseado na contagem
+        if positive_count > negative_count:
+            if positive_count >= 3:
+                score = 0.8
+                label = "Muito Positivo"
+                color = "#00C851"
+            else:
+                score = 0.5
+                label = "Positivo"
+                color = "#4CAF50"
+        elif negative_count > positive_count:
+            if negative_count >= 3:
+                score = -0.8
+                label = "Muito Negativo"
+                color = "#FF4B4B"
+            else:
+                score = -0.5
+                label = "Negativo"
+                color = "#FF8C00"
+        else:
+            score = 0.0
+            label = "Neutro"
+            color = "#FFC107"
+        
+        return {
+            "score": score,
+            "label": label,
+            "color": color
+        }
+
     def analyze_sentiment(self, text: str) -> Dict:
-        """Analisa sentimento do texto usando OpenAI"""
+        """Analisa sentimento do texto usando OpenAI com fallback"""
         try:
+            # Tentar análise com OpenAI primeiro
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {
                         "role": "system", 
-                        "content": """Você é um especialista em análise de sentimento para atendimento ao cliente.
-                        
-Analise o texto e classifique o sentimento em uma escala de -1 a +1:
-- -1.0: Muito negativo (reclamação séria, raiva, insatisfação extrema)
-- -0.5: Negativo (insatisfação, problema relatado)
-- 0.0: Neutro (informativo, sem emoção clara)
-- +0.5: Positivo (satisfação, agradecimento)
-- +1.0: Muito positivo (elogio, satisfação extrema)
+                        "content": """Analise o sentimento do texto em uma escala de -1 a +1:
+-1: Muito negativo
+0: Neutro  
++1: Muito positivo
 
-Responda APENAS com um número decimal entre -1 e +1, exemplo: 0.7"""
+Responda APENAS com um número, exemplo: 0.7"""
                     },
                     {
                         "role": "user",
-                        "content": f"Analise o sentimento deste texto: '{text}'"
+                        "content": text
                     }
                 ],
                 temperature=0.1,
-                max_tokens=10
+                max_tokens=5,
+                timeout=10  # Timeout de 10 segundos
             )
             
             # Tentar converter resposta para float
@@ -239,44 +288,38 @@ Responda APENAS com um número decimal entre -1 e +1, exemplo: 0.7"""
             
             if numbers:
                 sentiment_score = float(numbers[0])
+                # Garantir que está no range correto
+                sentiment_score = max(-1.0, min(1.0, sentiment_score))
+                
+                # Classificar sentimento
+                if sentiment_score >= 0.5:
+                    sentiment_label = "Muito Positivo"
+                    sentiment_color = "#00C851"
+                elif sentiment_score >= 0.1:
+                    sentiment_label = "Positivo"
+                    sentiment_color = "#4CAF50"
+                elif sentiment_score >= -0.1:
+                    sentiment_label = "Neutro"
+                    sentiment_color = "#FFC107"
+                elif sentiment_score >= -0.5:
+                    sentiment_label = "Negativo"
+                    sentiment_color = "#FF8C00"
+                else:
+                    sentiment_label = "Muito Negativo"
+                    sentiment_color = "#FF4B4B"
+                
+                return {
+                    "score": sentiment_score,
+                    "label": sentiment_label,
+                    "color": sentiment_color
+                }
             else:
-                # Se não conseguir extrair número, assumir neutro
-                sentiment_score = 0.0
-            
-            # Garantir que está no range correto
-            sentiment_score = max(-1.0, min(1.0, sentiment_score))
-            
-            # Classificar sentimento
-            if sentiment_score >= 0.5:
-                sentiment_label = "Muito Positivo"
-                sentiment_color = "#00C851"
-            elif sentiment_score >= 0.1:
-                sentiment_label = "Positivo"
-                sentiment_color = "#4CAF50"
-            elif sentiment_score >= -0.1:
-                sentiment_label = "Neutro"
-                sentiment_color = "#FFC107"
-            elif sentiment_score >= -0.5:
-                sentiment_label = "Negativo"
-                sentiment_color = "#FF8C00"
-            else:
-                sentiment_label = "Muito Negativo"
-                sentiment_color = "#FF4B4B"
-            
-            return {
-                "score": sentiment_score,
-                "label": sentiment_label,
-                "color": sentiment_color
-            }
+                raise ValueError("Não foi possível extrair número da resposta")
             
         except Exception as e:
-            st.warning(f"Erro na análise de sentimento: {str(e)}. Usando análise neutro.")
-            # Retornar neutro em caso de erro
-            return {
-                "score": 0.0,
-                "label": "Neutro (Erro)",
-                "color": "#FFC107"
-            }
+            # Fallback para análise simples
+            st.info(f"🔄 Usando análise de sentimento simplificada (OpenAI indisponível)")
+            return self.analyze_sentiment_simple(text)
         """Gera embedding para um texto"""
         try:
             response = self.client.embeddings.create(
