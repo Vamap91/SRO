@@ -215,23 +215,81 @@ class SROAnalyzer:
             return None
     
     def analyze_sentiment_simple(self, text: str) -> Dict:
-        """Análise de sentimento simples baseada em palavras-chave"""
-        # Palavras positivas
-        positive_words = ['gostei', 'obrigado', 'obrigada', 'excelente', 'ótimo', 'bom', 'satisfeito', 'parabéns']
+        """Análise de sentimento melhorada baseada em palavras-chave"""
         
-        # Palavras negativas  
-        negative_words = ['problema', 'erro', 'ruim', 'péssimo', 'insatisfeito', 'reclamação', 'defeito']
+        # Palavras MUITO POSITIVAS (peso 3)
+        very_positive = ['excelente', 'fantástico', 'perfeito', 'maravilhoso', 'sensacional', 'incrível']
+        
+        # Palavras POSITIVAS (peso 2)
+        positive_words = [
+            'gostei', 'obrigado', 'obrigada', 'agradecer', 'agradecimento', 'ótimo', 'bom', 
+            'satisfeito', 'parabéns', 'feliz', 'contente', 'adorei', 'amei', 'recomendo',
+            'sucesso', 'muito bom', 'top', 'show', 'legal', 'bacana', 'aprovado'
+        ]
+        
+        # Palavras LIGEIRAMENTE POSITIVAS (peso 1)
+        light_positive = ['ok', 'bem', 'certo', 'tranquilo', 'normal', 'adequado']
+        
+        # Palavras MUITO NEGATIVAS (peso 3)
+        very_negative = ['péssimo', 'horrível', 'terrível', 'desastre', 'lixo', 'vergonha']
+        
+        # Palavras NEGATIVAS (peso 2)
+        negative_words = [
+            'problema', 'erro', 'falha', 'ruim', 'insatisfeito', 'reclamação', 'defeito',
+            'quebrado', 'não funciona', 'demora', 'lento', 'decepção', 'frustração',
+            'raiva', 'indignado', 'revoltado', 'chateado', 'aborrecido'
+        ]
+        
+        # Palavras LIGEIRAMENTE NEGATIVAS (peso 1)
+        light_negative = ['meio', 'mais ou menos', 'podia ser melhor', 'deixa a desejar']
         
         text_lower = text.lower()
         
-        positive_count = sum(1 for word in positive_words if word in text_lower)
-        negative_count = sum(1 for word in negative_words if word in text_lower)
+        # Calcular scores com pesos
+        score_positive = 0
+        score_negative = 0
         
-        if positive_count > negative_count:
+        # Contar palavras muito positivas
+        very_pos_count = sum(1 for word in very_positive if word in text_lower)
+        score_positive += very_pos_count * 3
+        
+        # Contar palavras positivas
+        pos_count = sum(1 for word in positive_words if word in text_lower)
+        score_positive += pos_count * 2
+        
+        # Contar palavras ligeiramente positivas
+        light_pos_count = sum(1 for word in light_positive if word in text_lower)
+        score_positive += light_pos_count * 1
+        
+        # Contar palavras muito negativas
+        very_neg_count = sum(1 for word in very_negative if word in text_lower)
+        score_negative += very_neg_count * 3
+        
+        # Contar palavras negativas
+        neg_count = sum(1 for word in negative_words if word in text_lower)
+        score_negative += neg_count * 2
+        
+        # Contar palavras ligeiramente negativas
+        light_neg_count = sum(1 for word in light_negative if word in text_lower)
+        score_negative += light_neg_count * 1
+        
+        # Calcular score final
+        total_score = score_positive - score_negative
+        
+        # Determinar sentimento baseado no score
+        if total_score >= 6:  # Muito positivo
+            return {"score": 0.9, "label": "Muito Positivo", "color": "#00C851"}
+        elif total_score >= 3:  # Positivo
             return {"score": 0.7, "label": "Positivo", "color": "#4CAF50"}
-        elif negative_count > positive_count:
+        elif total_score >= 1:  # Ligeiramente positivo
+            return {"score": 0.3, "label": "Ligeiramente Positivo", "color": "#8BC34A"}
+        elif total_score <= -6:  # Muito negativo
+            return {"score": -0.9, "label": "Muito Negativo", "color": "#FF4B4B"}
+        elif total_score <= -3:  # Negativo
             return {"score": -0.7, "label": "Negativo", "color": "#FF8C00"}
-        else:
+        elif total_score <= -1:  # Ligeiramente negativo
+            return {"score": -0.3, "label": "Ligeiramente Negativo", "color": "#FFA726"}
+        else:  # Neutro
             return {"score": 0.0, "label": "Neutro", "color": "#FFC107"}
     
     def analyze_risk(self, text: str, top_k: int = 10) -> Dict:
