@@ -202,7 +202,70 @@ class SROAnalyzer:
             st.error(f"Erro ao carregar sistema: {str(e)}")
             return False
     
-    def generate_embedding(self, text: str) -> Optional[List[float]]:
+    def analyze_sentiment(self, text: str) -> Dict:
+        """Analisa sentimento do texto usando OpenAI"""
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": """Você é um especialista em análise de sentimento para atendimento ao cliente.
+                        
+Analise o texto e classifique o sentimento em uma escala de -1 a +1:
+- -1.0: Muito negativo (reclamação séria, raiva, insatisfação extrema)
+- -0.5: Negativo (insatisfação, problema relatado)
+- 0.0: Neutro (informativo, sem emoção clara)
+- +0.5: Positivo (satisfação, agradecimento)
+- +1.0: Muito positivo (elogio, satisfação extrema)
+
+Responda APENAS com um número decimal entre -1 e +1, exemplo: 0.7"""
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Analise o sentimento deste texto: '{text}'"
+                    }
+                ],
+                temperature=0.1,
+                max_tokens=10
+            )
+            
+            sentiment_score = float(response.choices[0].message.content.strip())
+            
+            # Garantir que está no range correto
+            sentiment_score = max(-1.0, min(1.0, sentiment_score))
+            
+            # Classificar sentimento
+            if sentiment_score >= 0.5:
+                sentiment_label = "Muito Positivo"
+                sentiment_color = "#00C851"
+            elif sentiment_score >= 0.1:
+                sentiment_label = "Positivo"
+                sentiment_color = "#4CAF50"
+            elif sentiment_score >= -0.1:
+                sentiment_label = "Neutro"
+                sentiment_color = "#FFC107"
+            elif sentiment_score >= -0.5:
+                sentiment_label = "Negativo"
+                sentiment_color = "#FF8C00"
+            else:
+                sentiment_label = "Muito Negativo"
+                sentiment_color = "#FF4B4B"
+            
+            return {
+                "score": sentiment_score,
+                "label": sentiment_label,
+                "color": sentiment_color
+            }
+            
+        except Exception as e:
+            st.warning(f"Erro na análise de sentimento: {str(e)}")
+            # Retornar neutro em caso de erro
+            return {
+                "score": 0.0,
+                "label": "Neutro",
+                "color": "#FFC107"
+            }
         """Gera embedding para um texto"""
         try:
             response = self.client.embeddings.create(
@@ -215,11 +278,14 @@ class SROAnalyzer:
             return None
     
     def analyze_risk(self, text: str, top_k: int = 10) -> Dict:
-        """Analisa risco de reclamação baseado em similaridade"""
+        """Analisa risco de reclamação baseado em similaridade E sentimento"""
         if not self.is_loaded:
             return {"error": "Sistema não carregado"}
         
-        # Gerar embedding do texto
+        # 1. ANÁLISE DE SENTIMENTO
+        sentiment = self.analyze_sentiment(text)
+        
+        # 2. GERAR EMBEDDING E BUSCAR SIMILARES
         embedding = self.generate_embedding(text)
         if embedding is None:
             return {"error": "Falha ao gerar embedding"}
@@ -235,17 +301,37 @@ class SROAnalyzer:
         max_similarity = float(similarities[0]) if len(similarities) > 0 else 0.0
         avg_similarity = float(np.mean(similarities))
         
-        # Calcular score de risco (0-100%)
-        risk_score = min(100, max_similarity * 100)
+        # 3. CALCULAR SCORE DE RISCO AJUSTADO PELO SENTIMENTO
+        base_risk = max_similarity * 100  # Score baseado em similaridade
         
-        # Classificar risco
-        if risk_score >= 80:
+        # Ajuste baseado no sentimento
+        if sentiment["score"] >= 0.3:  # Texto positivo
+            # Reduzir drasticamente o risco para textos positivos
+            sentiment_multiplier = max(0.1, 1 - abs(sentiment["score"]))  # 0.1 a 0.7
+            adjusted_risk = base_risk * sentiment_multiplier
+            risk_explanation = "Risco reduzido devido ao sentimento positivo"
+            
+        elif sentiment["score"] <= -0.3:  # Texto negativo
+            # Manter ou aumentar ligeiramente o risco para textos negativos
+            sentiment_multiplier = min(1.2, 1 + abs(sentiment["score"]) * 0.3)  # 1.0 a 1.2
+            adjusted_risk = base_risk * sentiment_multiplier
+            risk_explanation = "Risco aumentado devido ao sentimento negativo"
+            
+        else:  # Texto neutro
+            adjusted_risk = base_risk * 0.8  # Redução moderada para textos neutros
+            risk_explanation = "Risco moderado para texto neutro"
+        
+        # Garantir que o score final está entre 0-100
+        final_risk_score = max(0, min(100, adjusted_risk))
+        
+        # 4. CLASSIFICAR RISCO FINAL
+        if final_risk_score >= 80:
             risk_level = "Alta"
             risk_color = "#FF4B4B"
-        elif risk_score >= 60:
+        elif final_risk_score >= 60:
             risk_level = "Média"
             risk_color = "#FF8C00"
-        elif risk_score >= 30:
+        elif final_risk_score >= 30:
             risk_level = "Baixa"
             risk_color = "#FFD700"
         else:
@@ -262,9 +348,12 @@ class SROAnalyzer:
                 similar_complaints.append(item)
         
         return {
-            "risk_score": risk_score,
+            "risk_score": final_risk_score,
             "risk_level": risk_level,
             "risk_color": risk_color,
+            "sentiment": sentiment,
+            "base_risk": base_risk,
+            "risk_explanation": risk_explanation,
             "max_similarity": max_similarity,
             "avg_similarity": avg_similarity,
             "similar_complaints": similar_complaints,
@@ -584,6 +673,29 @@ def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
     with col1:
         st.subheader("📊 Resultado da Análise")
         
+        # Mostrar análise de sentimento
+        st.write("**🎭 Análise de Sentimento:**")
+        sentiment_col1, sentiment_col2 = st.columns([1, 2])
+        
+        with sentiment_col1:
+            # Mostrar score de sentimento
+            sentiment_score = result["sentiment"]["score"]
+            st.metric(
+                "Sentimento", 
+                f"{sentiment_score:+.2f}",
+                help="Escala: -1 (muito negativo) a +1 (muito positivo)"
+            )
+        
+        with sentiment_col2:
+            # Mostrar classificação do sentimento
+            st.markdown(f"""
+            <div style="padding: 0.5rem; border-radius: 0.5rem; background-color: {result['sentiment']['color']}20; border-left: 4px solid {result['sentiment']['color']};">
+                <strong style="color: {result['sentiment']['color']};">{result['sentiment']['label']}</strong>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
         # Gauge de risco
         gauge_fig = create_risk_gauge(
             result["risk_score"], 
@@ -592,10 +704,22 @@ def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
         )
         st.plotly_chart(gauge_fig, use_container_width=True)
         
-        # Métricas
-        st.metric("📈 Score de Risco", f"{result['risk_score']:.1f}%")
+        # Métricas principais
+        st.metric("📈 Score de Risco Final", f"{result['risk_score']:.1f}%")
         st.metric("🏷️ Classificação", result["risk_level"])
-        st.metric("🔗 Similaridade Máxima", f"{result['max_similarity']:.3f}")
+        
+        # Explicação do ajuste
+        st.info(f"ℹ️ {result['risk_explanation']}")
+        
+        # Métricas técnicas em expander
+        with st.expander("🔧 Detalhes Técnicos"):
+            col_tech1, col_tech2 = st.columns(2)
+            with col_tech1:
+                st.metric("📊 Risco Base (Similaridade)", f"{result['base_risk']:.1f}%")
+                st.metric("🔗 Similaridade Máxima", f"{result['max_similarity']:.3f}")
+            with col_tech2:
+                st.metric("📊 Similaridade Média", f"{result['avg_similarity']:.3f}")
+                st.metric("🔍 Reclamações Analisadas", result['total_analyzed'])
     
     with col2:
         st.subheader("📈 Análise de Similaridade")
@@ -636,17 +760,35 @@ def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
         mime="application/json"
     )
     
-    # Recomendações
+    # Recomendações inteligentes baseadas em sentimento
     st.subheader("💡 Recomendações")
     
-    if result["risk_score"] >= 80:
-        st.error("🚨 **RISCO ALTO**: Atenção imediata necessária. Implementar medidas preventivas urgentes.")
-    elif result["risk_score"] >= 60:
-        st.warning("⚠️ **RISCO MÉDIO**: Monitoramento contínuo recomendado. Considerar ações preventivas.")
-    elif result["risk_score"] >= 30:
-        st.info("ℹ️ **RISCO BAIXO**: Monitoramento regular suficiente.")
-    else:
-        st.success("✅ **RISCO NULO**: Situação controlada. Manter procedimentos padrão.")
+    sentiment_score = result["sentiment"]["score"]
+    risk_score = result["risk_score"]
+    
+    if sentiment_score >= 0.3:  # Texto positivo
+        if risk_score < 30:
+            st.success("🌟 **FEEDBACK POSITIVO**: Este é um elogio! Considere usar como case de sucesso ou testimônio.")
+        else:
+            st.info("🤔 **ANÁLISE MISTA**: Sentimento positivo com alta similaridade a reclamações. Verifique contexto.")
+    
+    elif sentiment_score <= -0.3:  # Texto negativo
+        if risk_score >= 80:
+            st.error("🚨 **RISCO CRÍTICO**: Sentimento negativo + alta similaridade. Ação imediata necessária!")
+        elif risk_score >= 60:
+            st.warning("⚠️ **RISCO ELEVADO**: Monitoramento contínuo e ações preventivas recomendadas.")
+        elif risk_score >= 30:
+            st.info("📋 **ATENÇÃO**: Sentimento negativo, mas baixa similaridade. Investigar contexto específico.")
+        else:
+            st.success("✅ **RISCO CONTROLADO**: Apesar do tom, baixa probabilidade de reclamação formal.")
+    
+    else:  # Texto neutro
+        if risk_score >= 80:
+            st.warning("⚠️ **RISCO MODERADO**: Texto neutro com alta similaridade. Monitoramento recomendado.")
+        elif risk_score >= 60:
+            st.info("ℹ️ **OBSERVAÇÃO**: Monitoramento regular suficiente.")
+        else:
+            st.success("✅ **SITUAÇÃO NORMAL**: Procedimentos padrão adequados.")
 
 if __name__ == "__main__":
     main()
