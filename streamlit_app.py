@@ -215,110 +215,22 @@ class SROAnalyzer:
             return None
     
     def analyze_sentiment_simple(self, text: str) -> Dict:
-        """Análise de sentimento melhorada baseada em palavras-chave"""
-        
-        # Palavras MUITO POSITIVAS (peso 3)
-        very_positive = ['excelente', 'fantástico', 'perfeito', 'maravilhoso', 'sensacional', 'incrível']
-        
-        # Palavras POSITIVAS (peso 2)
-        positive_words = [
-            'gostei', 'obrigado', 'obrigada', 'agradecer', 'agradecimento', 'ótimo', 'bom', 
-            'satisfeito', 'parabéns', 'feliz', 'contente', 'adorei', 'amei', 'recomendo',
-            'sucesso', 'muito bom', 'top', 'show', 'legal', 'bacana', 'aprovado'
-        ]
-        
-        # Palavras LIGEIRAMENTE POSITIVAS (peso 1)
-        light_positive = ['ok', 'bem', 'certo', 'tranquilo', 'normal', 'adequado']
-        
-        # Palavras MUITO NEGATIVAS (peso 3)
-        very_negative = ['péssimo', 'horrível', 'terrível', 'desastre', 'lixo', 'vergonha']
-        
-        # Palavras NEGATIVAS (peso 2)
-        negative_words = [
-            'problema', 'erro', 'falha', 'ruim', 'insatisfeito', 'reclamação', 'defeito',
-            'quebrado', 'não funciona', 'demora', 'lento', 'decepção', 'frustração',
-            'raiva', 'indignado', 'revoltado', 'chateado', 'aborrecido'
-        ]
-        
-        # Palavras LIGEIRAMENTE NEGATIVAS (peso 1)
-        light_negative = ['meio', 'mais ou menos', 'podia ser melhor', 'deixa a desejar']
+        """Análise de sentimento ULTRA SIMPLES para debug"""
         
         text_lower = text.lower()
+        st.error(f"🔍 DEBUG: Analisando texto: '{text_lower}'")
         
-        # DEBUG: Mostrar texto analisado
-        st.info(f"🔍 Analisando texto: '{text_lower}'")
+        # Teste direto para sua frase
+        if 'excelente' in text_lower:
+            st.error(f"✅ ENCONTROU 'excelente' no texto!")
+            return {"score": 0.9, "label": "Muito Positivo (FORÇADO)", "color": "#00C851"}
         
-        # Calcular scores com pesos
-        score_positive = 0
-        score_negative = 0
-        found_words = []
+        if 'agradecer' in text_lower:
+            st.error(f"✅ ENCONTROU 'agradecer' no texto!")
+            return {"score": 0.8, "label": "Positivo (FORÇADO)", "color": "#4CAF50"}
         
-        # Contar palavras muito positivas
-        very_pos_found = [word for word in very_positive if word in text_lower]
-        very_pos_count = len(very_pos_found)
-        score_positive += very_pos_count * 3
-        if very_pos_found:
-            found_words.extend([f"{word} (muito positiva +3)" for word in very_pos_found])
-        
-        # Contar palavras positivas
-        pos_found = [word for word in positive_words if word in text_lower]
-        pos_count = len(pos_found)
-        score_positive += pos_count * 2
-        if pos_found:
-            found_words.extend([f"{word} (positiva +2)" for word in pos_found])
-        
-        # Contar palavras ligeiramente positivas
-        light_pos_found = [word for word in light_positive if word in text_lower]
-        light_pos_count = len(light_pos_found)
-        score_positive += light_pos_count * 1
-        if light_pos_found:
-            found_words.extend([f"{word} (ligeiramente positiva +1)" for word in light_pos_found])
-        
-        # Contar palavras muito negativas
-        very_neg_found = [word for word in very_negative if word in text_lower]
-        very_neg_count = len(very_neg_found)
-        score_negative += very_neg_count * 3
-        if very_neg_found:
-            found_words.extend([f"{word} (muito negativa -3)" for word in very_neg_found])
-        
-        # Contar palavras negativas
-        neg_found = [word for word in negative_words if word in text_lower]
-        neg_count = len(neg_found)
-        score_negative += neg_count * 2
-        if neg_found:
-            found_words.extend([f"{word} (negativa -2)" for word in neg_found])
-        
-        # Contar palavras ligeiramente negativas
-        light_neg_found = [word for word in light_negative if word in text_lower]
-        light_neg_count = len(light_neg_found)
-        score_negative += light_neg_count * 1
-        if light_neg_found:
-            found_words.extend([f"{word} (ligeiramente negativa -1)" for word in light_neg_found])
-        
-        # DEBUG: Mostrar palavras encontradas
-        st.info(f"📝 Palavras encontradas: {found_words}")
-        
-        # Calcular score final
-        total_score = score_positive - score_negative
-        
-        # DEBUG: Mostrar cálculo
-        st.info(f"📊 Score positivo: {score_positive} | Score negativo: {score_negative} | Total: {total_score}")
-        
-        # Determinar sentimento baseado no score
-        if total_score >= 6:  # Muito positivo
-            return {"score": 0.9, "label": "Muito Positivo", "color": "#00C851"}
-        elif total_score >= 3:  # Positivo
-            return {"score": 0.7, "label": "Positivo", "color": "#4CAF50"}
-        elif total_score >= 1:  # Ligeiramente positivo
-            return {"score": 0.3, "label": "Ligeiramente Positivo", "color": "#8BC34A"}
-        elif total_score <= -6:  # Muito negativo
-            return {"score": -0.9, "label": "Muito Negativo", "color": "#FF4B4B"}
-        elif total_score <= -3:  # Negativo
-            return {"score": -0.7, "label": "Negativo", "color": "#FF8C00"}
-        elif total_score <= -1:  # Ligeiramente negativo
-            return {"score": -0.3, "label": "Ligeiramente Negativo", "color": "#FFA726"}
-        else:  # Neutro
-            return {"score": 0.0, "label": "Neutro", "color": "#FFC107"}
+        st.error(f"❌ NÃO encontrou palavras positivas")
+        return {"score": 0.0, "label": "Neutro (TESTE)", "color": "#FFC107"}
     
     def analyze_risk(self, text: str, top_k: int = 10) -> Dict:
         """Analisa risco de reclamação baseado em similaridade"""
@@ -345,46 +257,26 @@ class SROAnalyzer:
         sentiment = self.analyze_sentiment_simple(text)
         
         # DEBUG: Mostrar análise de sentimento
-        st.info(f"🔍 DEBUG Sentimento: {sentiment}")
+        st.error(f"🎭 DEBUG Sentimento retornado: {sentiment}")
         
         # Calcular score de risco base
         base_risk = max_similarity * 100
         
         # DEBUG: Mostrar risco base
-        st.info(f"📊 DEBUG Risco Base: {base_risk:.1f}%")
+        st.error(f"📊 DEBUG Risco Base: {base_risk:.1f}%")
         
-        # Ajuste MELHORADO baseado no sentimento
-        if sentiment["score"] >= 0.8:  # Muito positivo
-            final_risk = base_risk * 0.1  # Reduz 90%
-            explanation = "Risco drasticamente reduzido - feedback muito positivo detectado"
-            multiplier = 0.1
-        elif sentiment["score"] >= 0.5:  # Positivo
-            final_risk = base_risk * 0.2  # Reduz 80%
-            explanation = "Risco significativamente reduzido - sentimento positivo"
-            multiplier = 0.2
-        elif sentiment["score"] >= 0.1:  # Ligeiramente positivo
-            final_risk = base_risk * 0.4  # Reduz 60%
-            explanation = "Risco moderadamente reduzido - sentimento ligeiramente positivo"
-            multiplier = 0.4
-        elif sentiment["score"] <= -0.8:  # Muito negativo
-            final_risk = base_risk * 1.3  # Aumenta 30%
-            explanation = "Risco aumentado - sentimento muito negativo detectado"
-            multiplier = 1.3
-        elif sentiment["score"] <= -0.5:  # Negativo
-            final_risk = base_risk * 1.1  # Aumenta 10%
-            explanation = "Risco ligeiramente aumentado - sentimento negativo"
-            multiplier = 1.1
-        elif sentiment["score"] <= -0.1:  # Ligeiramente negativo
-            final_risk = base_risk * 1.0  # Mantém risco
-            explanation = "Risco mantido - sentimento ligeiramente negativo"
-            multiplier = 1.0
-        else:  # Neutro
-            final_risk = base_risk * 0.7  # Reduz 30%
-            explanation = "Risco moderado - texto neutro"
-            multiplier = 0.7
+        # TESTE DIRETO: Se sentimento é positivo, forçar redução
+        if sentiment["score"] > 0.5:
+            final_risk = 10.0  # FORÇAR 10%
+            explanation = "TESTE: Risco forçado para 10% - sentimento positivo"
+            st.error(f"🔧 FORÇANDO risco para 10% porque sentimento = {sentiment['score']}")
+        else:
+            final_risk = base_risk
+            explanation = "Risco mantido - sem ajuste"
+            st.error(f"⚠️ Mantendo risco original porque sentimento = {sentiment['score']}")
         
         # DEBUG: Mostrar cálculo
-        st.info(f"⚡ DEBUG Multiplicador: {multiplier} | Risco Final: {final_risk:.1f}%")
+        st.error(f"🎯 DEBUG Risco Final: {final_risk:.1f}%")
         
         # Garantir range 0-100
         final_risk = max(0, min(100, final_risk))
