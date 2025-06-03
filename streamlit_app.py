@@ -245,36 +245,64 @@ class SROAnalyzer:
         
         text_lower = text.lower()
         
+        # DEBUG: Mostrar texto analisado
+        st.info(f"🔍 Analisando texto: '{text_lower}'")
+        
         # Calcular scores com pesos
         score_positive = 0
         score_negative = 0
+        found_words = []
         
         # Contar palavras muito positivas
-        very_pos_count = sum(1 for word in very_positive if word in text_lower)
+        very_pos_found = [word for word in very_positive if word in text_lower]
+        very_pos_count = len(very_pos_found)
         score_positive += very_pos_count * 3
+        if very_pos_found:
+            found_words.extend([f"{word} (muito positiva +3)" for word in very_pos_found])
         
         # Contar palavras positivas
-        pos_count = sum(1 for word in positive_words if word in text_lower)
+        pos_found = [word for word in positive_words if word in text_lower]
+        pos_count = len(pos_found)
         score_positive += pos_count * 2
+        if pos_found:
+            found_words.extend([f"{word} (positiva +2)" for word in pos_found])
         
         # Contar palavras ligeiramente positivas
-        light_pos_count = sum(1 for word in light_positive if word in text_lower)
+        light_pos_found = [word for word in light_positive if word in text_lower]
+        light_pos_count = len(light_pos_found)
         score_positive += light_pos_count * 1
+        if light_pos_found:
+            found_words.extend([f"{word} (ligeiramente positiva +1)" for word in light_pos_found])
         
         # Contar palavras muito negativas
-        very_neg_count = sum(1 for word in very_negative if word in text_lower)
+        very_neg_found = [word for word in very_negative if word in text_lower]
+        very_neg_count = len(very_neg_found)
         score_negative += very_neg_count * 3
+        if very_neg_found:
+            found_words.extend([f"{word} (muito negativa -3)" for word in very_neg_found])
         
         # Contar palavras negativas
-        neg_count = sum(1 for word in negative_words if word in text_lower)
+        neg_found = [word for word in negative_words if word in text_lower]
+        neg_count = len(neg_found)
         score_negative += neg_count * 2
+        if neg_found:
+            found_words.extend([f"{word} (negativa -2)" for word in neg_found])
         
         # Contar palavras ligeiramente negativas
-        light_neg_count = sum(1 for word in light_negative if word in text_lower)
+        light_neg_found = [word for word in light_negative if word in text_lower]
+        light_neg_count = len(light_neg_found)
         score_negative += light_neg_count * 1
+        if light_neg_found:
+            found_words.extend([f"{word} (ligeiramente negativa -1)" for word in light_neg_found])
+        
+        # DEBUG: Mostrar palavras encontradas
+        st.info(f"📝 Palavras encontradas: {found_words}")
         
         # Calcular score final
         total_score = score_positive - score_negative
+        
+        # DEBUG: Mostrar cálculo
+        st.info(f"📊 Score positivo: {score_positive} | Score negativo: {score_negative} | Total: {total_score}")
         
         # Determinar sentimento baseado no score
         if total_score >= 6:  # Muito positivo
@@ -316,19 +344,47 @@ class SROAnalyzer:
         # Análise de sentimento
         sentiment = self.analyze_sentiment_simple(text)
         
+        # DEBUG: Mostrar análise de sentimento
+        st.info(f"🔍 DEBUG Sentimento: {sentiment}")
+        
         # Calcular score de risco base
         base_risk = max_similarity * 100
         
-        # Ajuste SIMPLES baseado no sentimento
-        if sentiment["score"] > 0.5:  # Positivo
-            final_risk = base_risk * 0.3  # Reduz drasticamente
-            explanation = "Risco reduzido - sentimento positivo"
-        elif sentiment["score"] < -0.5:  # Negativo
+        # DEBUG: Mostrar risco base
+        st.info(f"📊 DEBUG Risco Base: {base_risk:.1f}%")
+        
+        # Ajuste MELHORADO baseado no sentimento
+        if sentiment["score"] >= 0.8:  # Muito positivo
+            final_risk = base_risk * 0.1  # Reduz 90%
+            explanation = "Risco drasticamente reduzido - feedback muito positivo detectado"
+            multiplier = 0.1
+        elif sentiment["score"] >= 0.5:  # Positivo
+            final_risk = base_risk * 0.2  # Reduz 80%
+            explanation = "Risco significativamente reduzido - sentimento positivo"
+            multiplier = 0.2
+        elif sentiment["score"] >= 0.1:  # Ligeiramente positivo
+            final_risk = base_risk * 0.4  # Reduz 60%
+            explanation = "Risco moderadamente reduzido - sentimento ligeiramente positivo"
+            multiplier = 0.4
+        elif sentiment["score"] <= -0.8:  # Muito negativo
+            final_risk = base_risk * 1.3  # Aumenta 30%
+            explanation = "Risco aumentado - sentimento muito negativo detectado"
+            multiplier = 1.3
+        elif sentiment["score"] <= -0.5:  # Negativo
+            final_risk = base_risk * 1.1  # Aumenta 10%
+            explanation = "Risco ligeiramente aumentado - sentimento negativo"
+            multiplier = 1.1
+        elif sentiment["score"] <= -0.1:  # Ligeiramente negativo
             final_risk = base_risk * 1.0  # Mantém risco
-            explanation = "Risco mantido - sentimento negativo"
+            explanation = "Risco mantido - sentimento ligeiramente negativo"
+            multiplier = 1.0
         else:  # Neutro
-            final_risk = base_risk * 0.7  # Reduz moderadamente
+            final_risk = base_risk * 0.7  # Reduz 30%
             explanation = "Risco moderado - texto neutro"
+            multiplier = 0.7
+        
+        # DEBUG: Mostrar cálculo
+        st.info(f"⚡ DEBUG Multiplicador: {multiplier} | Risco Final: {final_risk:.1f}%")
         
         # Garantir range 0-100
         final_risk = max(0, min(100, final_risk))
@@ -486,9 +542,6 @@ def analyze_text(analyzer: SROAnalyzer, text: str, source_name: str):
     if "error" in result:
         st.error(f"❌ {result['error']}")
         return
-    
-    # Debug: Verificar estrutura do resultado
-    st.write("DEBUG - Chaves do resultado:", list(result.keys()))
     
     # Layout em colunas
     col1, col2 = st.columns([1, 1])
