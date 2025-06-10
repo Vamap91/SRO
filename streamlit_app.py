@@ -12,6 +12,11 @@ import plotly.graph_objects as go
 from datetime import datetime
 import re
 
+# Nota: Arquivos mantidos para versões futuras:
+# - Dados_SRO.pkl: Base histórica para implementação futura com embeddings/RAG
+# - dados_semSRO.pkl: Base complementar para análises específicas
+# Versão atual usa análise baseada em prompt estruturado
+
 # Configuração da página
 st.set_page_config(
     page_title="SRO Risk Analyzer - Prompt Version",
