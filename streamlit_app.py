@@ -314,27 +314,33 @@ class DualSROAnalyzer:
         # Análise de sentimento
         sentiment = self.analyze_sentiment_advanced(text)
         
-        # ALGORITMO DE RISCO DUAL
+        # ALGORITMO DE RISCO DUAL CORRIGIDO
         # Fator base: diferença entre similaridades
-        similarity_ratio = max_sim_sro / max(max_sim_sem_sro, 0.01)  # Evitar divisão por zero
+        similarity_ratio = max_sim_sro / max(max_sim_sem_sro, 0.01)
         
-        # Score base de risco
-        base_risk = max_sim_sro * 100
+        # NOVA LÓGICA: Base no que é MAIS similar
+        if max_sim_sro > max_sim_sem_sro:
+            # SRO é mais similar = RISCO ALTO
+            base_risk = max_sim_sro * 100
+            comparison_boost = 0  # Sem ajuste, já é naturalmente alto
+        else:
+            # SEM-SRO é mais similar = RISCO BAIXO
+            base_risk = max_sim_sem_sro * 100
+            # Inversão forte: quanto maior a similaridade com SEM-SRO, menor o risco
+            comparison_boost = -80  # Redução drástica
         
-        # Ajustes por comparação
-        if similarity_ratio > 1.2:  # SRO muito mais similar
-            comparison_boost = 20
+        # Ajustes refinados por ratio
+        if similarity_ratio > 1.3:  # SRO MUITO mais similar
+            comparison_boost += 25
         elif similarity_ratio > 1.1:  # SRO ligeiramente mais similar
-            comparison_boost = 10
-        elif similarity_ratio < 0.8:  # SEM-SRO mais similar
-            comparison_boost = -30
+            comparison_boost += 10
+        elif similarity_ratio < 0.7:  # SEM-SRO MUITO mais similar
+            comparison_boost -= 40  # Redução adicional
         elif similarity_ratio < 0.9:  # SEM-SRO ligeiramente mais similar
-            comparison_boost = -15
-        else:  # Similaridades próximas
-            comparison_boost = 0
+            comparison_boost -= 20
         
-        # Ajuste por sentimento
-        sentiment_adjustment = sentiment["score"] * -25  # Sentimento positivo reduz risco
+        # Ajuste por sentimento (mantido)
+        sentiment_adjustment = sentiment["score"] * -25
         
         # Cálculo final
         final_risk = base_risk + comparison_boost + sentiment_adjustment
@@ -378,11 +384,13 @@ class DualSROAnalyzer:
         
         # Explicação do cálculo
         explanation = f"""
-        **Análise Dual:**
+        **Análise Dual Corrigida:**
         • Similaridade SRO: {max_sim_sro:.3f} | SEM-SRO: {max_sim_sem_sro:.3f}
-        • Ratio: {similarity_ratio:.2f} | Ajuste: {comparison_boost:+.0f}%
-        • Sentimento: {sentiment['label']} | Ajuste: {sentiment_adjustment:+.0f}%
-        • Risco Base: {base_risk:.1f}% → Final: {final_risk:.1f}%
+        • Mais Similar: {'SRO' if max_sim_sro > max_sim_sem_sro else 'SEM-SRO'}
+        • Ratio SRO/SEM-SRO: {similarity_ratio:.2f}
+        • Ajuste Comparativo: {comparison_boost:+.0f}%
+        • Sentimento: {sentiment['label']} (Ajuste: {sentiment_adjustment:+.0f}%)
+        • Cálculo: {base_risk:.1f}% {comparison_boost:+.0f}% {sentiment_adjustment:+.0f}% = {final_risk:.1f}%
         """
         
         return {
