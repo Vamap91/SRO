@@ -2,419 +2,310 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import openai
-import faiss
-import pickle
 import json
 import PyPDF2
 import io
-import requests
 import os
 from typing import List, Dict, Tuple, Optional
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
-import base64
+import re
 
 # Configuração da página
 st.set_page_config(
-    page_title="SRO Risk Analyzer",
+    page_title="SRO Risk Analyzer - Prompt Version",
     page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-@st.cache_data
-def download_sro_files():
-    """
-    Download automático dos arquivos SRO e SEM-SRO
-    """
-    
-    # Configuração dos arquivos
-    files_config = {
-        "embeddings_sro": {
-            "id": "1EHrakmYbVCD6E_aEzhmbMp17stHEw9lU",
-            "filename": "Embeddings_SRO.index",
-            "size_mb": "~150MB",
-            "type": "SRO"
-        },
-        "embeddings_sem_sro": {
-            "id": "1F8G05DWYA3cOcU7r1c3QzhAXUl4Jn2qT",
-            "filename": "Embeddings_SEM_SRO.index",
-            "size_mb": "~120MB",
-            "type": "SEM-SRO"
-        }
-    }
-    
-    # Verificar arquivos pequenos (dados) no repositório
-    small_files = ["Dados_SRO.pkl", "Dados_SEM_SRO.pkl"]
-    
-    for small_file in small_files:
-        if not os.path.exists(small_file):
-            st.error(f"""
-            ❌ **Arquivo {small_file} não encontrado**
-            
-            Este arquivo deveria estar no repositório GitHub.
-            Certifique-se de que você fez o upload correto.
-            """)
-            return False
-        else:
-            st.success(f"✅ {small_file} encontrado no repositório")
-    
-    # Download dos arquivos grandes
-    download_success = True
-    
-    for file_key, file_info in files_config.items():
-        if not os.path.exists(file_info["filename"]):
-            st.info(f"📥 Iniciando download: {file_info['filename']} ({file_info['type']})")
-            
-            if not download_large_file(file_info):
-                download_success = False
-                break
-        else:
-            st.info(f"📁 {file_info['filename']} já existe localmente")
-    
-    return download_success
-
-def download_large_file(file_info: Dict) -> bool:
-    """Download de arquivo grande do Google Drive"""
-    
-    urls_to_try = [
-        f"https://drive.google.com/uc?export=download&id={file_info['id']}",
-        f"https://drive.google.com/uc?id={file_info['id']}&export=download",
-        f"https://drive.usercontent.google.com/download?id={file_info['id']}&export=download&authuser=0&confirm=t"
-    ]
-    
-    with st.spinner(f"📥 Baixando {file_info['filename']} ({file_info['size_mb']})..."):
-        for i, file_url in enumerate(urls_to_try):
-            try:
-                st.info(f"Tentativa {i+1}/3: Baixando {file_info['type']}...")
-                
-                session = requests.Session()
-                response = session.get(file_url, stream=True)
-                
-                # Verificar se precisa confirmar download
-                if 'download_warning' in response.text or 'virus scan warning' in response.text:
-                    import re
-                    confirm_token = None
-                    for line in response.text.splitlines():
-                        if 'confirm=' in line:
-                            confirm_token = re.search(r'confirm=([^&]*)', line)
-                            if confirm_token:
-                                confirm_token = confirm_token.group(1)
-                                break
-                    
-                    if confirm_token:
-                        params = {'id': file_info['id'], 'confirm': confirm_token}
-                        response = session.get('https://drive.google.com/uc', params=params, stream=True)
-                
-                response.raise_for_status()
-                
-                # Verificar se é arquivo válido
-                content_type = response.headers.get('content-type', '')
-                if 'text/html' in content_type and response.status_code == 200:
-                    continue
-                
-                # Salvar com progresso
-                total_size = int(response.headers.get('content-length', 0))
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                with open(file_info["filename"], 'wb') as f:
-                    downloaded = 0
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            if total_size > 0:
-                                progress = downloaded / total_size
-                                progress_bar.progress(progress)
-                                status_text.text(f"Baixado: {downloaded / (1024*1024):.1f} MB de {total_size / (1024*1024):.1f} MB")
-                
-                # Verificar sucesso
-                if os.path.exists(file_info["filename"]) and os.path.getsize(file_info["filename"]) > 10000000:
-                    st.success(f"✅ {file_info['filename']} baixado com sucesso!")
-                    return True
-                else:
-                    st.warning(f"⚠️ Tentativa {i+1} falhou, tentando próxima URL...")
-                    if os.path.exists(file_info["filename"]):
-                        os.remove(file_info["filename"])
-                    
-            except Exception as e:
-                st.warning(f"⚠️ Tentativa {i+1} erro: {str(e)}")
-                continue
-        
-        st.error(f"❌ Falha no download: {file_info['filename']}")
-        return False
-
-def check_files_status():
-    """Verifica status de todos os arquivos necessários"""
-    required_files = [
-        "Embeddings_SRO.index", 
-        "Dados_SRO.pkl",
-        "Embeddings_SEM_SRO.index", 
-        "Dados_SEM_SRO.pkl"
-    ]
-    
-    files_status = {}
-    
-    for file in required_files:
-        exists = os.path.exists(file)
-        size = os.path.getsize(file) if exists else 0
-        
-        if "SRO.pkl" in file or "SEM_SRO.pkl" in file:
-            source = "GitHub"
-        else:
-            source = "Google Drive"
-        
-        files_status[file] = {
-            "exists": exists,
-            "size_mb": round(size / (1024*1024), 1) if exists else 0,
-            "source": source,
-            "type": "SRO" if "SRO.index" in file or ("SRO.pkl" in file and "SEM" not in file) else "SEM-SRO"
-        }
-    
-    return files_status
-
-class DualSROAnalyzer:
-    """Classe principal para análise de risco usando dois índices"""
+class SROPromptAnalyzer:
+    """Classe para análise de risco SRO usando prompt estruturado"""
     
     def __init__(self):
-        self.faiss_index_sro = None
-        self.faiss_index_sem_sro = None
-        self.data_list_sro = None
-        self.data_list_sem_sro = None
         self.client = None
         self.is_loaded = False
         
-    def load_system(self, api_key: str) -> bool:
-        """Carrega ambos os sistemas FAISS"""
-        try:
-            # Configurar OpenAI
-            self.client = openai.OpenAI(api_key=api_key)
-            
-            # Carregar índice SRO
-            st.info("📊 Carregando índice SRO...")
-            self.faiss_index_sro = faiss.read_index("Embeddings_SRO.index")
-            with open("Dados_SRO.pkl", 'rb') as f:
-                self.data_list_sro = pickle.load(f)
-            
-            # Carregar índice SEM-SRO
-            st.info("📊 Carregando índice SEM-SRO...")
-            self.faiss_index_sem_sro = faiss.read_index("Embeddings_SEM_SRO.index")
-            with open("Dados_SEM_SRO.pkl", 'rb') as f:
-                self.data_list_sem_sro = pickle.load(f)
-            
-            self.is_loaded = True
-            st.success("✅ Ambos os índices carregados com sucesso!")
-            return True
-            
-        except Exception as e:
-            st.error(f"Erro ao carregar sistema: {str(e)}")
-            return False
-    
-    def generate_embedding(self, text: str) -> Optional[List[float]]:
-        """Gera embedding para um texto"""
-        try:
-            response = self.client.embeddings.create(
-                input=text,
-                model="text-embedding-ada-002"
-            )
-            return response.data[0].embedding
-        except Exception as e:
-            st.error(f"Erro ao gerar embedding: {str(e)}")
-            return None
-    
-    def analyze_sentiment_advanced(self, text: str) -> Dict:
-        """Análise de sentimento melhorada"""
-        text_lower = text.lower()
-        
-        # Palavras positivas (reduzem risco)
-        positive_words = [
-            'excelente', 'ótimo', 'perfeito', 'maravilhoso', 'fantástico',
-            'agradecer', 'obrigado', 'parabéns', 'satisfeito', 'contente',
-            'recomendo', 'eficiente', 'rápido', 'atencioso', 'prestativo'
+        # Palavras-chave para análise
+        self.neutral_words = [
+            'fila', 'data', 'equipe', 'atualização', 'agenda', 'recontato',
+            'inserido', 'tabela', 'negociado', 'complemento', 'evento', 
+            'telefone', 'inicial', 'hashtag', 'uf', 'id', 'solicitante',
+            'complexidade', 'código', 'sku', 'whats', 'observação', 
+            'pergunta', 'lojista', 'item', 'qt', 'escala', 'criação',
+            'exclusão', 'tabelado', 'responsável', 'bloqueio', 'distribuidor',
+            'anjos', 'isento', 'receptivo', 'tela', 'dedutível', 'incluído',
+            'imports', 'estética', 'agradou', 'geral', 'objeto', 'vida'
         ]
         
-        # Palavras negativas (aumentam risco)
-        negative_words = [
+        self.technical_issues = [
+            'defeito', 'conserto', 'danos', 'sinistro', 'vazamento',
+            'barulho', 'quebra', 'arranhado', 'sujo', 'manchado',
+            'escorrida', 'descolado', 'solto', 'acendendo', 'parou',
+            'sumiu', 'faltando', 'faltou', 'errado', 'errada',
+            'incompleto', 'danificado', 'estragado', 'pior', 'voltou'
+        ]
+        
+        self.negative_moderate = [
             'terrível', 'péssimo', 'horrível', 'decepcionado', 'frustrado',
             'reclamar', 'problema', 'erro', 'falha', 'demora', 'demorado',
             'insatisfeito', 'revoltado', 'indignado', 'absurdo', 'inaceitável'
         ]
         
-        # Palavras críticas (muito aumentam risco)
-        critical_words = [
-            'processar', 'advogado', 'juridico', 'procon', 'denuncia',
+        self.legal_risk = [
+            'processar', 'advogado', 'jurídico', 'procon', 'denúncia',
             'órgão', 'fiscalização', 'consumidor', 'direito', 'prejuízo'
         ]
         
-        positive_count = sum(1 for word in positive_words if word in text_lower)
-        negative_count = sum(1 for word in negative_words if word in text_lower)
-        critical_count = sum(1 for word in critical_words if word in text_lower)
+        self.positive_words = [
+            'excelente', 'ótimo', 'perfeito', 'maravilhoso', 'fantástico',
+            'agradecer', 'obrigado', 'parabéns', 'satisfeito', 'contente',
+            'recomendo', 'eficiente', 'rápido', 'atencioso', 'prestativo'
+        ]
         
-        # Calcular score (-1 a 1)
-        score = (positive_count - negative_count - critical_count * 2) / max(1, len(text_lower.split()))
-        score = max(-1, min(1, score))  # Normalizar
+    def load_system(self, api_key: str) -> bool:
+        """Carrega o sistema OpenAI"""
+        try:
+            self.client = openai.OpenAI(api_key=api_key)
+            self.is_loaded = True
+            return True
+        except Exception as e:
+            st.error(f"Erro ao carregar OpenAI: {str(e)}")
+            return False
+    
+    def count_contacts(self, text: str) -> int:
+        """Conta o número de contatos baseado em padrões textuais"""
+        # Padrões que indicam múltiplos contatos
+        contact_patterns = [
+            r'contato\s*\d+',
+            r'ligação\s*\d+',
+            r'retorno\s*\d+',
+            r'recontato',
+            r'nova\s*tentativa',
+            r'segundo\s*contato',
+            r'terceiro\s*contato',
+            r'quarto\s*contato'
+        ]
         
-        # Classificar
-        if score >= 0.3:
-            label = "Muito Positivo"
-            color = "#00C851"
-        elif score >= 0.1:
-            label = "Positivo"
-            color = "#4CAF50"
-        elif score >= -0.1:
-            label = "Neutro"
-            color = "#FFC107"
-        elif score >= -0.3:
-            label = "Negativo"
-            color = "#FF8C00"
+        contacts = 1  # Pelo menos 1 contato
+        text_lower = text.lower()
+        
+        for pattern in contact_patterns:
+            matches = re.findall(pattern, text_lower)
+            if matches:
+                contacts += len(matches)
+        
+        # Verificar palavras neutras para reduzir risco
+        neutral_count = sum(1 for word in self.neutral_words if word in text_lower)
+        if neutral_count > 3:  # Se muitas palavras neutras, reduzir contatos
+            contacts = max(1, contacts - 1)
+            
+        return min(contacts, 5)  # Máximo 5 contatos
+    
+    def analyze_waiting_time(self, text: str) -> int:
+        """Analisa tempo de espera baseado em padrões"""
+        text_lower = text.lower()
+        score = 0
+        
+        # Padrões de atraso
+        delay_patterns = [
+            'atras', 'demor', 'espera', 'aguard', 'pend',
+            'mais de', 'já faz', 'há dias', 'semanas'
+        ]
+        
+        urgent_patterns = [
+            'urgente', 'emergência', 'pressa', 'rápido',
+            'imediato', 'hoje', 'agora'
+        ]
+        
+        for pattern in delay_patterns:
+            if pattern in text_lower:
+                score += 3
+                
+        for pattern in urgent_patterns:
+            if pattern in text_lower:
+                score += 2
+                
+        return min(score, 10)
+    
+    def analyze_operational_failures(self, text: str) -> int:
+        """Analisa falhas operacionais"""
+        text_lower = text.lower()
+        score = 0
+        
+        # Indícios técnicos (alto risco)
+        technical_count = sum(1 for word in self.technical_issues if word in text_lower)
+        score += technical_count * 3
+        
+        # Falhas de processo (médio risco)
+        process_patterns = [
+            'cadastro incorreto', 'não atendidas', 'falha.*comunicação',
+            'problema.*técnico', 'pós.*serviço'
+        ]
+        
+        for pattern in process_patterns:
+            if re.search(pattern, text_lower):
+                score += 2
+                
+        return min(score, 10)
+    
+    def analyze_emotional_state(self, text: str) -> int:
+        """Analisa estado emocional"""
+        text_lower = text.lower()
+        score = 0
+        
+        # Termos negativos moderados (1 ponto cada)
+        negative_count = sum(1 for word in self.negative_moderate if word in text_lower)
+        score += negative_count * 1
+        
+        # Termos de risco jurídico (3 pontos cada)
+        legal_count = sum(1 for word in self.legal_risk if word in text_lower)
+        score += legal_count * 3
+        
+        # Termos positivos reduzem risco (-1 ponto cada)
+        positive_count = sum(1 for word in self.positive_words if word in text_lower)
+        score -= positive_count * 1
+        
+        return max(0, min(score, 10))
+    
+    def calculate_risk_score(self, text: str, order_id: str = "N/A") -> Dict:
+        """Calcula o score de risco baseado na metodologia do prompt"""
+        
+        # Analisar cada fator
+        contacts = self.count_contacts(text)
+        waiting_time = self.analyze_waiting_time(text)
+        operational_failures = self.analyze_operational_failures(text)
+        emotional_state = self.analyze_emotional_state(text)
+        
+        # Converter para scores 0-10
+        contact_score = min(10, contacts * 2)  # 1=2, 2=4, 3+=6+
+        waiting_score = waiting_time
+        failure_score = operational_failures
+        emotion_score = emotional_state
+        
+        # Aplicar pesos
+        weighted_contacts = contact_score * 4      # Peso 4
+        weighted_waiting = waiting_score * 3       # Peso 3
+        weighted_failures = failure_score * 2      # Peso 2
+        weighted_emotion = emotion_score * 1       # Peso 1
+        
+        # Calcular total (máximo 100)
+        total_score = weighted_contacts + weighted_waiting + weighted_failures + weighted_emotion
+        percentage = min(100, total_score)
+        
+        # Classificar risco
+        if percentage >= 86:
+            risk_level = "Crítico"
+            risk_color = "#FF0000"
+        elif percentage >= 61:
+            risk_level = "Alto"
+            risk_color = "#FF4B4B"
+        elif percentage >= 31:
+            risk_level = "Médio"
+            risk_color = "#FF8C00"
         else:
-            label = "Muito Negativo"
-            color = "#FF4B4B"
+            risk_level = "Baixo"
+            risk_color = "#00C851"
+        
+        # Identificar fatores críticos
+        critical_factors = []
+        if contacts >= 3:
+            critical_factors.append(f"{contacts} contatos")
+        if any(word in text.lower() for word in self.legal_risk):
+            critical_factors.append("ameaça jurídica")
+        if any(word in text.lower() for word in self.technical_issues):
+            critical_factors.append("problemas técnicos")
+        if waiting_score > 5:
+            critical_factors.append("atraso no atendimento")
         
         return {
-            "score": score,
-            "label": label,
-            "color": color,
-            "details": {
-                "positive_count": positive_count,
-                "negative_count": negative_count,
-                "critical_count": critical_count
-            }
+            "order_id": order_id,
+            "risk_level": risk_level,
+            "percentage": percentage,
+            "risk_color": risk_color,
+            "factors": {
+                "contacts": contacts,
+                "contact_score": contact_score,
+                "waiting_score": waiting_score,
+                "failure_score": failure_score,
+                "emotion_score": emotion_score
+            },
+            "weighted_scores": {
+                "contacts": weighted_contacts,
+                "waiting": weighted_waiting,
+                "failures": weighted_failures,
+                "emotion": weighted_emotion
+            },
+            "critical_factors": critical_factors,
+            "total_score": total_score
         }
     
-    def analyze_risk(self, text: str, top_k: int = 10) -> Dict:
-        """Análise de risco usando ambos os índices"""
+    def analyze_with_gpt(self, text: str, order_id: str = "N/A") -> Dict:
+        """Análise usando GPT com o prompt estruturado"""
         if not self.is_loaded:
             return {"error": "Sistema não carregado"}
         
-        # Gerar embedding
-        embedding = self.generate_embedding(text)
-        if embedding is None:
-            return {"error": "Falha ao gerar embedding"}
+        # Primeiro, fazer análise local
+        local_analysis = self.calculate_risk_score(text, order_id)
         
-        query_vector = np.array([embedding], dtype=np.float32)
-        faiss.normalize_L2(query_vector)
+        # Prompt estruturado baseado no PDF
+        prompt = f"""
+Você é um analista preditivo em uma empresa de serviços automotivos, especialista em prever o risco de um cliente formalizar uma reclamação (SRO - Sistema de Registro de Ocorrências).
+
+Analise o seguinte registro de atendimento e estime a probabilidade (0% a 100%) de reclamação formal:
+
+TEXTO PARA ANÁLISE:
+{text}
+
+METODOLOGIA DE ANÁLISE:
+1. Frequência de Contatos (Peso 4): Conte indícios de múltiplos contatos
+2. Tempo de Espera (Peso 3): Identifique atrasos ou urgência
+3. Falhas Operacionais (Peso 2): Detecte problemas técnicos ou de processo
+4. Estado Emocional (Peso 1): Avalie tom emocional e ameaças
+
+PALAVRAS-CHAVE IMPORTANTES:
+- Risco Jurídico (alto risco): processar, advogado, jurídico, procon, denúncia
+- Problemas Técnicos: defeito, conserto, danos, vazamento, quebra, erro
+- Sentimento Negativo: terrível, péssimo, frustrado, revoltado, absurdo
+- Sentimento Positivo (reduz risco): excelente, ótimo, agradecer, satisfeito
+
+Forneça sua análise no seguinte formato:
+
+- Pedido: {order_id}
+- Probabilidade de Reclamação: [Baixo/Médio/Alto/Crítico]
+- Porcentagem Estimada: [X%]
+- Fatores Críticos: [liste os principais fatores de risco identificados]
+- Conclusão: [análise detalhada e recomendação de ação]
+"""
         
-        # Buscar em ambos os índices
-        distances_sro, indices_sro = self.faiss_index_sro.search(query_vector, top_k)
-        distances_sem_sro, indices_sem_sro = self.faiss_index_sem_sro.search(query_vector, top_k)
-        
-        # Extrair similaridades
-        similarities_sro = distances_sro[0]
-        similarities_sem_sro = distances_sem_sro[0]
-        
-        # Calcular métricas
-        max_sim_sro = float(similarities_sro[0]) if len(similarities_sro) > 0 else 0.0
-        max_sim_sem_sro = float(similarities_sem_sro[0]) if len(similarities_sem_sro) > 0 else 0.0
-        avg_sim_sro = float(np.mean(similarities_sro))
-        avg_sim_sem_sro = float(np.mean(similarities_sem_sro))
-        
-        # Análise de sentimento
-        sentiment = self.analyze_sentiment_advanced(text)
-        
-        # ALGORITMO DE RISCO DUAL CORRIGIDO
-        # Fator base: diferença entre similaridades
-        similarity_ratio = max_sim_sro / max(max_sim_sem_sro, 0.01)
-        
-        # NOVA LÓGICA: Base no que é MAIS similar
-        if max_sim_sro > max_sim_sem_sro:
-            # SRO é mais similar = RISCO ALTO
-            base_risk = max_sim_sro * 100
-            comparison_boost = 0  # Sem ajuste, já é naturalmente alto
-        else:
-            # SEM-SRO é mais similar = RISCO BAIXO
-            base_risk = max_sim_sem_sro * 100
-            # Inversão forte: quanto maior a similaridade com SEM-SRO, menor o risco
-            comparison_boost = -80  # Redução drástica
-        
-        # Ajustes refinados por ratio
-        if similarity_ratio > 1.3:  # SRO MUITO mais similar
-            comparison_boost += 25
-        elif similarity_ratio > 1.1:  # SRO ligeiramente mais similar
-            comparison_boost += 10
-        elif similarity_ratio < 0.7:  # SEM-SRO MUITO mais similar
-            comparison_boost -= 40  # Redução adicional
-        elif similarity_ratio < 0.9:  # SEM-SRO ligeiramente mais similar
-            comparison_boost -= 20
-        
-        # Ajuste por sentimento (mantido)
-        sentiment_adjustment = sentiment["score"] * -25
-        
-        # Cálculo final
-        final_risk = base_risk + comparison_boost + sentiment_adjustment
-        final_risk = max(0, min(100, final_risk))  # Limitar 0-100
-        
-        # Classificação
-        if final_risk >= 80:
-            risk_level = "Crítica"
-            risk_color = "#8B0000"
-        elif final_risk >= 60:
-            risk_level = "Alta"
-            risk_color = "#FF4B4B"
-        elif final_risk >= 40:
-            risk_level = "Média"
-            risk_color = "#FF8C00"
-        elif final_risk >= 20:
-            risk_level = "Baixa"
-            risk_color = "#FFD700"
-        else:
-            risk_level = "Mínima"
-            risk_color = "#00C851"
-        
-        # Preparar casos similares
-        similar_sro = []
-        for i, (sim, idx) in enumerate(zip(similarities_sro, indices_sro[0])):
-            if idx < len(self.data_list_sro):
-                item = self.data_list_sro[idx].copy()
-                item['similaridade'] = float(sim)
-                item['rank'] = i + 1
-                item['tipo'] = 'SRO'
-                similar_sro.append(item)
-        
-        similar_sem_sro = []
-        for i, (sim, idx) in enumerate(zip(similarities_sem_sro, indices_sem_sro[0])):
-            if idx < len(self.data_list_sem_sro):
-                item = self.data_list_sem_sro[idx].copy()
-                item['similaridade'] = float(sim)
-                item['rank'] = i + 1
-                item['tipo'] = 'SEM-SRO'
-                similar_sem_sro.append(item)
-        
-        # Explicação do cálculo
-        explanation = f"""
-        **Análise Dual Corrigida:**
-        • Similaridade SRO: {max_sim_sro:.3f} | SEM-SRO: {max_sim_sem_sro:.3f}
-        • Mais Similar: {'SRO' if max_sim_sro > max_sim_sem_sro else 'SEM-SRO'}
-        • Ratio SRO/SEM-SRO: {similarity_ratio:.2f}
-        • Ajuste Comparativo: {comparison_boost:+.0f}%
-        • Sentimento: {sentiment['label']} (Ajuste: {sentiment_adjustment:+.0f}%)
-        • Cálculo: {base_risk:.1f}% {comparison_boost:+.0f}% {sentiment_adjustment:+.0f}% = {final_risk:.1f}%
-        """
-        
-        return {
-            "risk_score": final_risk,
-            "risk_level": risk_level,
-            "risk_color": risk_color,
-            "sentiment": sentiment,
-            "base_risk": base_risk,
-            "comparison_boost": comparison_boost,
-            "sentiment_adjustment": sentiment_adjustment,
-            "similarity_ratio": similarity_ratio,
-            "explanation": explanation,
-            "sro_metrics": {
-                "max_similarity": max_sim_sro,
-                "avg_similarity": avg_sim_sro,
-                "similar_cases": similar_sro[:5]
-            },
-            "sem_sro_metrics": {
-                "max_similarity": max_sim_sem_sro,
-                "avg_similarity": avg_sim_sem_sro,
-                "similar_cases": similar_sem_sro[:5]
-            },
-            "total_analyzed": len(similarities_sro) + len(similarities_sem_sro)
-        }
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "Você é um especialista em análise preditiva de reclamações de clientes."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.3
+            )
+            
+            gpt_analysis = response.choices[0].message.content
+            
+            # Combinar análise local com GPT
+            return {
+                **local_analysis,
+                "gpt_analysis": gpt_analysis,
+                "method": "hybrid"
+            }
+            
+        except Exception as e:
+            st.warning(f"Erro na análise GPT: {str(e)}")
+            return {
+                **local_analysis,
+                "gpt_analysis": "Análise GPT não disponível",
+                "method": "local_only"
+            }
 
 def extract_text_from_file(uploaded_file) -> str:
     """Extrai texto de arquivos uploaded"""
@@ -461,91 +352,81 @@ def extract_text_from_file(uploaded_file) -> str:
     except Exception as e:
         return f"Erro ao extrair texto: {str(e)}"
 
-def create_dual_risk_gauge(risk_score: float, risk_level: str, risk_color: str):
-    """Cria gauge de risco com escala dual"""
+def create_risk_gauge(risk_score: float, risk_level: str, risk_color: str):
+    """Cria gauge de risco"""
     fig = go.Figure(go.Indicator(
         mode = "gauge+number",
         value = risk_score,
         domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': "Risco de Reclamação (Análise Dual)"},
+        title = {'text': "Risco de Reclamação SRO"},
         gauge = {
             'axis': {'range': [None, 100]},
             'bar': {'color': risk_color},
             'steps': [
-                {'range': [0, 20], 'color': "#E8F5E8"},
-                {'range': [20, 40], 'color': "#FFF8DC"},
-                {'range': [40, 60], 'color': "#FFE4B5"},
-                {'range': [60, 80], 'color': "#FFCCCB"},
-                {'range': [80, 100], 'color': "#FFB6C1"}
+                {'range': [0, 30], 'color': "#E8F5E8"},
+                {'range': [30, 60], 'color': "#FFF8DC"},
+                {'range': [60, 85], 'color': "#FFE4B5"},
+                {'range': [85, 100], 'color': "#FFE4E1"}
             ],
             'threshold': {
                 'line': {'color': "red", 'width': 4},
                 'thickness': 0.75,
-                'value': 90
+                'value': 85
             }
         }
     ))
     
-    fig.update_layout(height=350)
+    fig.update_layout(height=300)
     return fig
 
-def create_comparison_chart(sro_metrics: Dict, sem_sro_metrics: Dict):
-    """Cria gráfico comparativo SRO vs SEM-SRO"""
+def create_factors_chart(analysis_result: Dict):
+    """Cria gráfico dos fatores de risco"""
+    factors = analysis_result["factors"]
     
-    data = {
-        'Tipo': ['SRO', 'SEM-SRO'],
-        'Similaridade_Máxima': [sro_metrics['max_similarity'], sem_sro_metrics['max_similarity']],
-        'Similaridade_Média': [sro_metrics['avg_similarity'], sem_sro_metrics['avg_similarity']]
-    }
+    factor_names = ["Contatos", "Tempo Espera", "Falhas Op.", "Estado Emoc."]
+    scores = [
+        factors["contact_score"],
+        factors["waiting_score"], 
+        factors["failure_score"],
+        factors["emotion_score"]
+    ]
+    weights = [4, 3, 2, 1]
+    weighted_scores = [s * w for s, w in zip(scores, weights)]
     
-    df = pd.DataFrame(data)
+    fig = go.Figure()
     
-    fig = go.Figure(data=[
-        go.Bar(name='Similaridade Máxima', x=df['Tipo'], y=df['Similaridade_Máxima'], 
-               marker_color=['#FF4B4B', '#00C851']),
-        go.Bar(name='Similaridade Média', x=df['Tipo'], y=df['Similaridade_Média'], 
-               marker_color=['#FF8C8C', '#66D966'])
-    ])
+    fig.add_trace(go.Bar(
+        name='Score Base',
+        x=factor_names,
+        y=scores,
+        marker_color='lightblue',
+        yaxis='y1'
+    ))
+    
+    fig.add_trace(go.Bar(
+        name='Score Ponderado',
+        x=factor_names,
+        y=weighted_scores,
+        marker_color='darkblue',
+        yaxis='y2'
+    ))
     
     fig.update_layout(
-        title="Comparação: SRO vs SEM-SRO",
+        title="Análise por Fatores",
+        xaxis=dict(title="Fatores"),
+        yaxis=dict(title="Score Base (0-10)", side="left", range=[0, 10]),
+        yaxis2=dict(title="Score Ponderado", side="right", overlaying="y", range=[0, 40]),
         barmode='group',
-        height=400,
-        yaxis_title="Similaridade"
+        height=400
     )
     
     return fig
 
-def download_report(analysis_result: Dict, original_text: str) -> str:
-    """Gera relatório para download"""
-    report = {
-        "timestamp": datetime.now().isoformat(),
-        "texto_analisado": original_text[:500] + "..." if len(original_text) > 500 else original_text,
-        "analise_risco": {
-            "score_risco": analysis_result["risk_score"],
-            "nivel_risco": analysis_result["risk_level"],
-            "similarity_ratio": analysis_result["similarity_ratio"],
-            "sentimento": analysis_result["sentiment"]["label"]
-        },
-        "metricas_sro": {
-            "max_similarity": analysis_result["sro_metrics"]["max_similarity"],
-            "avg_similarity": analysis_result["sro_metrics"]["avg_similarity"],
-            "casos_similares": analysis_result["sro_metrics"]["similar_cases"]
-        },
-        "metricas_sem_sro": {
-            "max_similarity": analysis_result["sem_sro_metrics"]["max_similarity"],
-            "avg_similarity": analysis_result["sem_sro_metrics"]["avg_similarity"],
-            "casos_similares": analysis_result["sem_sro_metrics"]["similar_cases"]
-        }
-    }
+def analyze_text(analyzer: SROPromptAnalyzer, text: str, source_name: str, order_id: str = "N/A"):
+    """Função para analisar texto e mostrar resultados"""
     
-    return json.dumps(report, ensure_ascii=False, indent=2)
-
-def analyze_text_dual(analyzer: DualSROAnalyzer, text: str, source_name: str):
-    """Função para analisar texto com sistema dual"""
-    
-    with st.spinner("🤖 Analisando risco com sistema dual..."):
-        result = analyzer.analyze_risk(text, top_k=10)
+    with st.spinner("🤖 Analisando risco de reclamação SRO..."):
+        result = analyzer.analyze_with_gpt(text, order_id)
     
     if "error" in result:
         st.error(f"❌ {result['error']}")
@@ -555,113 +436,133 @@ def analyze_text_dual(analyzer: DualSROAnalyzer, text: str, source_name: str):
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        st.subheader("📊 Resultado da Análise Dual")
-        
-        # Sentimento
-        if "sentiment" in result:
-            st.write(f"**🎭 Sentimento:** {result['sentiment']['label']}")
-            st.write(f"**📈 Score Sentimento:** {result['sentiment']['score']:.3f}")
+        st.subheader("📊 Resultado da Análise")
         
         # Gauge de risco
-        gauge_fig = create_dual_risk_gauge(
-            result["risk_score"], 
+        gauge_fig = create_risk_gauge(
+            result["percentage"], 
             result["risk_level"], 
             result["risk_color"]
         )
         st.plotly_chart(gauge_fig, use_container_width=True)
         
         # Métricas principais
-        st.metric("🎯 Score de Risco Final", f"{result['risk_score']:.1f}%")
+        st.metric("📈 Score de Risco", f"{result['percentage']:.1f}%")
         st.metric("🏷️ Classificação", result["risk_level"])
-        st.metric("⚖️ Ratio SRO/SEM-SRO", f"{result['similarity_ratio']:.2f}")
-    
+        st.metric("📞 Número de Contatos", result["factors"]["contacts"])
+        
     with col2:
-        st.subheader("📈 Comparação SRO vs SEM-SRO")
+        st.subheader("📈 Análise Detalhada por Fatores")
         
-        # Gráfico comparativo
-        comp_chart = create_comparison_chart(
-            result["sro_metrics"], 
-            result["sem_sro_metrics"]
+        # Gráfico de fatores
+        factors_chart = create_factors_chart(result)
+        st.plotly_chart(factors_chart, use_container_width=True)
+    
+    # Análise GPT
+    if "gpt_analysis" in result:
+        st.subheader("🤖 Análise Detalhada (GPT-4)")
+        st.text_area(
+            "Análise completa:",
+            result["gpt_analysis"],
+            height=200,
+            disabled=True
         )
-        st.plotly_chart(comp_chart, use_container_width=True)
+    
+    # Fatores críticos identificados
+    if result["critical_factors"]:
+        st.subheader("⚠️ Fatores Críticos Identificados")
+        for factor in result["critical_factors"]:
+            st.warning(f"• {factor}")
+    
+    # Breakdown detalhado
+    with st.expander("🔍 Breakdown Detalhado da Análise"):
+        st.write("**Scores por Fator:**")
+        factors = result["factors"]
+        weighted = result["weighted_scores"]
         
-        # Estatísticas detalhadas
-        st.write("**📊 Métricas SRO:**")
-        st.write(f"• Max: {result['sro_metrics']['max_similarity']:.3f}")
-        st.write(f"• Média: {result['sro_metrics']['avg_similarity']:.3f}")
+        col_a, col_b, col_c = st.columns(3)
         
-        st.write("**📊 Métricas SEM-SRO:**")
-        st.write(f"• Max: {result['sem_sro_metrics']['max_similarity']:.3f}")
-        st.write(f"• Média: {result['sem_sro_metrics']['avg_similarity']:.3f}")
+        with col_a:
+            st.write("**Fator**")
+            st.write("Contatos")
+            st.write("Tempo Espera")
+            st.write("Falhas Op.")
+            st.write("Estado Emoc.")
+            
+        with col_b:
+            st.write("**Score Base**")
+            st.write(f"{factors['contact_score']}/10")
+            st.write(f"{factors['waiting_score']}/10")
+            st.write(f"{factors['failure_score']}/10")
+            st.write(f"{factors['emotion_score']}/10")
+            
+        with col_c:
+            st.write("**Score Ponderado**")
+            st.write(f"{weighted['contacts']}/40")
+            st.write(f"{weighted['waiting']}/30")
+            st.write(f"{weighted['failures']}/20")
+            st.write(f"{weighted['emotion']}/10")
+        
+        st.write(f"**Total: {result['total_score']}/100 = {result['percentage']:.1f}%**")
     
-    # Explicação detalhada
-    st.subheader("🔍 Explicação do Cálculo")
-    st.info(result["explanation"])
+    # Recomendações baseadas no nível de risco
+    st.subheader("💡 Recomendações de Ação")
     
-    # Casos similares em tabs
-    st.subheader("📋 Casos Similares Encontrados")
-    
-    tab_sro, tab_sem_sro = st.tabs(["🔴 Casos SRO", "🟢 Casos SEM-SRO"])
-    
-    with tab_sro:
-        if result["sro_metrics"]["similar_cases"]:
-            for i, case in enumerate(result["sro_metrics"]["similar_cases"]):
-                with st.expander(f"SRO #{i+1} - Similaridade: {case['similaridade']:.1%}"):
-                    st.write("**Reclamação:**")
-                    st.write(case.get('reclamacao', 'N/A'))
-                    if 'solucao' in case:
-                        st.write("**Solução:**")
-                        st.write(case['solucao'])
-        else:
-            st.info("Nenhum caso SRO similar encontrado")
-    
-    with tab_sem_sro:
-        if result["sem_sro_metrics"]["similar_cases"]:
-            for i, case in enumerate(result["sem_sro_metrics"]["similar_cases"]):
-                with st.expander(f"SEM-SRO #{i+1} - Similaridade: {case['similaridade']:.1%}"):
-                    st.write("**Comentário:**")
-                    st.write(case.get('comentario', case.get('reclamacao', 'N/A')))
-        else:
-            st.info("Nenhum caso SEM-SRO similar encontrado")
+    if result["percentage"] >= 86:
+        st.error("🚨 **RISCO CRÍTICO**: Ação imediata necessária!")
+        st.write("• Contato imediato com supervisor")
+        st.write("• Priorização máxima do caso")
+        st.write("• Antecipação de agendamento")
+    elif result["percentage"] >= 61:
+        st.warning("⚠️ **RISCO ALTO**: Monitoramento próximo!")
+        st.write("• Contato proativo com o cliente")
+        st.write("• Envolvimento do gestor técnico")
+        st.write("• Feedback técnico imediato")
+    elif result["percentage"] >= 31:
+        st.info("ℹ️ **RISCO MÉDIO**: Atenção preventiva!")
+        st.write("• Acompanhamento regular")
+        st.write("• Correção de falhas identificadas")
+        st.write("• Comunicação proativa")
+    else:
+        st.success("✅ **RISCO BAIXO**: Situação controlada!")
+        st.write("• Acompanhamento padrão")
+        st.write("• Manutenção da qualidade")
     
     # Download do relatório
     st.subheader("📥 Download do Relatório")
     
-    report_json = download_report(result, text)
+    report_data = {
+        "timestamp": datetime.now().isoformat(),
+        "pedido": result["order_id"],
+        "texto_analisado": text[:500] + "..." if len(text) > 500 else text,
+        "resultado": {
+            "nivel_risco": result["risk_level"],
+            "porcentagem": result["percentage"],
+            "fatores_criticos": result["critical_factors"]
+        },
+        "analise_detalhada": result.get("gpt_analysis", ""),
+        "breakdown": {
+            "fatores": result["factors"],
+            "scores_ponderados": result["weighted_scores"],
+            "total": result["total_score"]
+        }
+    }
+    
+    report_json = json.dumps(report_data, ensure_ascii=False, indent=2)
     
     st.download_button(
         label="📄 Baixar Relatório JSON",
         data=report_json,
-        file_name=f"relatorio_risco_dual_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+        file_name=f"relatorio_sro_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
         mime="application/json"
     )
-    
-    # Recomendações avançadas
-    st.subheader("💡 Recomendações Baseadas em Análise Dual")
-    
-    if result["risk_score"] >= 80:
-        st.error("🚨 **RISCO CRÍTICO**: Intervenção imediata necessária!")
-        st.write("• Contato proativo com o cliente")
-        st.write("• Escalação para supervisor")
-        st.write("• Documentação detalhada")
-    elif result["risk_score"] >= 60:
-        st.warning("⚠️ **RISCO ALTO**: Monitoramento próximo recomendado!")
-        st.write("• Acompanhamento em 24h")
-        st.write("• Verificar satisfação do cliente")
-    elif result["risk_score"] >= 40:
-        st.info("ℹ️ **RISCO MÉDIO**: Monitoramento regular!")
-        st.write("• Follow-up em 48-72h")
-    elif result["risk_score"] >= 20:
-        st.success("✅ **RISCO BAIXO**: Situação controlada!")
-        st.write("• Monitoramento padrão")
-    else:
-        st.success("🎉 **RISCO MÍNIMO**: Excelente atendimento!")
-        st.write("• Cliente satisfeito, caso modelo")
 
+# Interface Streamlit
 def main():
     # Header
-    st.title("🔍 SRO Risk Analyzer - Dual Index")
-    st.markdown("**Sistema Avançado de Análise de Risco com Comparação SRO vs SEM-SRO**")
+    st.title("🔍 SRO Risk Analyzer - Versão Prompt")
+    st.markdown("**Sistema de Análise Preditiva de Reclamações**")
+    st.markdown("*Baseado na metodologia de análise estruturada com 4 fatores ponderados*")
     st.markdown("---")
     
     # Sidebar
@@ -681,94 +582,63 @@ def main():
             """)
             api_key = None
         
-        # Status dos arquivos
-        st.header("📁 Status dos Arquivos SRO")
+        # Informações da metodologia
+        st.header("📋 Metodologia de Análise")
+        st.info("""
+        **Fatores Ponderados:**
         
-        # Verificar e baixar arquivos se necessário
-        files_downloaded = download_sro_files()
+        🔢 **Frequência Contatos** (Peso 4)
+        - 1 contato: baixo risco
+        - 2 contatos: médio risco  
+        - 3+ contatos: alto risco
         
-        if files_downloaded:
-            files_status = check_files_status()
-            
-            # Agrupar por tipo
-            sro_files = {k: v for k, v in files_status.items() if "SRO" in k and "SEM_SRO" not in k}
-            sem_sro_files = {k: v for k, v in files_status.items() if "SEM_SRO" in k}
-            
-            st.write("**📊 Arquivos SRO:**")
-            for file, status in sro_files.items():
-                if status["exists"]:
-                    st.success(f"✅ {file} ({status['size_mb']} MB)")
-                else:
-                    st.error(f"❌ {file} não encontrado")
-            
-            st.write("**📊 Arquivos SEM-SRO:**")
-            for file, status in sem_sro_files.items():
-                if status["exists"]:
-                    st.success(f"✅ {file} ({status['size_mb']} MB)")
-                else:
-                    st.error(f"❌ {file} não encontrado")
-            
-            all_files_exist = all(status["exists"] for status in files_status.values())
-        else:
-            all_files_exist = False
-            st.error("❌ Falha no download dos arquivos")
+        ⏰ **Tempo de Espera** (Peso 3)
+        - Atrasos e urgência
         
-        # Status geral do sistema
-        st.header("🚦 Status do Sistema")
-        if all_files_exist and api_key:
-            st.success("🟢 Sistema Dual Pronto")
-        elif all_files_exist and not api_key:
-            st.warning("🟡 Configure API Key")
-        elif not all_files_exist and api_key:
-            st.warning("🟡 Arquivos em download")
-        else:
-            st.error("🔴 Sistema não configurado")
+        ⚙️ **Falhas Operacionais** (Peso 2)
+        - Problemas técnicos
+        - Falhas de processo
+        
+        😠 **Estado Emocional** (Peso 1)
+        - Sentimento negativo
+        - Ameaças jurídicas
+        - Palavras positivas (reduzem risco)
+        """)
+        
+        st.header("🎯 Classificação de Risco")
+        st.write("• **Baixo**: 0-30%")
+        st.write("• **Médio**: 31-60%") 
+        st.write("• **Alto**: 61-85%")
+        st.write("• **Crítico**: 86-100%")
     
     # Verificar pré-requisitos
     if not api_key:
         st.error("🔑 API Key não configurada nos secrets do Streamlit")
         st.stop()
     
-    if not all_files_exist:
-        st.error("📁 Arquivos SRO não disponíveis")
-        if st.button("🔄 Tentar Download Novamente"):
-            st.rerun()
-        st.stop()
-    
     # Inicializar analyzer
     @st.cache_resource
-    def load_dual_analyzer(_api_key):
-        analyzer = DualSROAnalyzer()
+    def load_analyzer(_api_key):
+        analyzer = SROPromptAnalyzer()
         if analyzer.load_system(_api_key):
             return analyzer
         return None
     
-    with st.spinner("🤖 Carregando sistema dual de análise..."):
-        analyzer = load_dual_analyzer(api_key)
+    with st.spinner("🤖 Carregando sistema de análise..."):
+        analyzer = load_analyzer(api_key)
     
     if analyzer is None:
-        st.error("❌ Falha ao carregar o sistema dual")
+        st.error("❌ Falha ao carregar o sistema SRO")
         st.stop()
     
-    st.success("✅ Sistema Dual carregado com sucesso!")
-    
-    # Informações do sistema - AQUI É O LOCAL CORRETO
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("📊 Base SRO", f"{len(analyzer.data_list_sro):,} casos")
-    with col2:
-        st.metric("📊 Base SEM-SRO", f"{len(analyzer.data_list_sem_sro):,} casos")
-    with col3:
-        st.metric("📊 Total", f"{len(analyzer.data_list_sro) + len(analyzer.data_list_sem_sro):,} casos")
-    
-    st.markdown("---")
+    st.success("✅ Sistema SRO carregado com sucesso!")
     
     # Interface principal
-    tab1, tab2, tab3 = st.tabs(["📤 Upload de Arquivo", "✍️ Texto Manual", "📊 Estatísticas do Sistema"])
+    tab1, tab2, tab3 = st.tabs(["📤 Upload de Arquivo", "✍️ Texto Manual", "🧪 Exemplos de Teste"])
     
     with tab1:
         st.header("📤 Análise de Arquivo")
-        st.markdown("Faça upload de um arquivo para analisar o risco de reclamação usando análise dual")
+        st.markdown("Faça upload de um arquivo para analisar o risco de reclamação")
         
         uploaded_file = st.file_uploader(
             "Escolha um arquivo",
@@ -776,138 +646,73 @@ def main():
             help="Formatos suportados: PDF, Excel, JSON, TXT"
         )
         
+        order_id = st.text_input("ID do Pedido (opcional)", placeholder="ORD123456")
+        
         if uploaded_file:
             with st.spinner("🔄 Extraindo texto do arquivo..."):
                 extracted_text = extract_text_from_file(uploaded_file)
             
-            # Preview do texto
+            # Mostrar preview do texto
             with st.expander("👁️ Preview do Texto Extraído"):
                 st.text_area(
                     "Texto extraído:",
                     extracted_text[:1000] + "..." if len(extracted_text) > 1000 else extracted_text,
-                    height=200,
-                    disabled=True
+                    height=200
                 )
             
-            if st.button("🔍 Analisar Risco Dual", key="analyze_file"):
-                analyze_text_dual(analyzer, extracted_text, uploaded_file.name)
+            if st.button("🔍 Analisar Risco", key="analyze_file"):
+                analyze_text(analyzer, extracted_text, uploaded_file.name, order_id or "Arquivo")
     
     with tab2:
         st.header("✍️ Análise de Texto Manual")
-        st.markdown("Digite ou cole um texto para analisar usando o sistema dual")
+        st.markdown("Digite ou cole um texto para analisar")
         
-        # Exemplos pré-definidos
-        st.subheader("💡 Exemplos para Teste")
+        order_id = st.text_input("ID do Pedido", placeholder="ORD123456", key="manual_order")
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("😡 Exemplo: Texto Negativo"):
-                example_negative = "Estou muito insatisfeito com o atendimento. Já é a terceira vez que ligo e não resolvem meu problema. Vou procurar meus direitos no Procon se não resolverem hoje mesmo. Isso é um absurdo!"
-                st.session_state.manual_text = example_negative
-        
-        with col2:
-            if st.button("😊 Exemplo: Texto Positivo"):
-                example_positive = "Gostaria de agradecer o excelente atendimento que recebi hoje. A atendente foi muito prestativa e resolveu minha questão rapidamente. Estou muito satisfeito com o serviço. Parabéns!"
-                st.session_state.manual_text = example_positive
-        
-        # Campo de texto
         manual_text = st.text_area(
             "Digite o texto para análise:",
-            value=st.session_state.get('manual_text', ''),
             height=200,
-            placeholder="Cole aqui o texto que deseja analisar...",
-            key="text_input"
+            placeholder="Cole aqui o registro de atendimento que deseja analisar..."
         )
         
-        if manual_text and st.button("🔍 Analisar Risco Dual", key="analyze_manual"):
-            analyze_text_dual(analyzer, manual_text, "Texto Manual")
+        if manual_text and st.button("🔍 Analisar Risco", key="analyze_manual"):
+            analyze_text(analyzer, manual_text, "Texto Manual", order_id or "Manual")
     
     with tab3:
-        st.header("📊 Estatísticas do Sistema Dual")
+        st.header("🧪 Exemplos de Teste")
+        st.markdown("Teste o sistema com exemplos pré-definidos")
         
-        # Métricas dos índices
-        st.subheader("🔢 Métricas dos Índices FAISS")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**📈 Índice SRO:**")
-            st.write(f"• Dimensões: {analyzer.faiss_index_sro.d}")
-            st.write(f"• Total de vetores: {analyzer.faiss_index_sro.ntotal:,}")
-            st.write(f"• Tipo de índice: {type(analyzer.faiss_index_sro).__name__}")
+        examples = {
+            "Baixo Risco": "Cliente agradeceu pelo excelente atendimento. Serviço executado conforme combinado. Cliente satisfeito com o resultado.",
             
-        with col2:
-            st.write("**📈 Índice SEM-SRO:**")
-            st.write(f"• Dimensões: {analyzer.faiss_index_sem_sro.d}")
-            st.write(f"• Total de vetores: {analyzer.faiss_index_sem_sro.ntotal:,}")
-            st.write(f"• Tipo de índice: {type(analyzer.faiss_index_sem_sro).__name__}")
+            "Médio Risco": "Cliente ligou duas vezes perguntando sobre o andamento. Mencionou que está com pressa para viajar. Aguardando retorno há 2 dias.",
+            
+            "Alto Risco": "Terceiro contato do cliente. Reclamou que o defeito voltou após o conserto. Disse que está muito frustrado e decepcionado com o serviço.",
+            
+            "Crítico": "Cliente extremamente revoltado. Quarto contato! Disse que vai acionar o Procon e processar a empresa. Defeito persiste e está causando prejuízo. Inaceitável!"
+        }
         
-        # Distribuição de dados
-        st.subheader("📊 Distribuição de Dados")
+        selected_example = st.selectbox("Escolha um exemplo:", list(examples.keys()))
         
-        # Gráfico de distribuição
-        distribution_data = pd.DataFrame({
-            'Tipo': ['SRO', 'SEM-SRO'],
-            'Quantidade': [len(analyzer.data_list_sro), len(analyzer.data_list_sem_sro)],
-            'Cor': ['#FF4B4B', '#00C851']
-        })
+        if st.button("🔍 Testar Exemplo", key="test_example"):
+            st.write(f"**Testando: {selected_example}**")
+            st.write(f"*Texto:* {examples[selected_example]}")
+            st.markdown("---")
+            analyze_text(analyzer, examples[selected_example], "Exemplo", f"TESTE_{selected_example.replace(' ', '_').upper()}")
         
-        fig_dist = px.pie(
-            distribution_data, 
-            values='Quantidade', 
-            names='Tipo',
-            title="Distribuição de Casos na Base de Dados",
-            color_discrete_sequence=['#FF4B4B', '#00C851']
+        # Exemplo customizado
+        st.subheader("📝 Criar Exemplo Customizado")
+        
+        custom_order = st.text_input("ID do Pedido Teste", placeholder="TESTE_001", key="custom_order")
+        custom_text = st.text_area(
+            "Texto de exemplo:",
+            height=150,
+            placeholder="Digite aqui um exemplo personalizado para testar...",
+            key="custom_example"
         )
         
-        st.plotly_chart(fig_dist, use_container_width=True)
-        
-        # Informações técnicas
-        st.subheader("⚙️ Informações Técnicas")
-        
-        st.write("**🧠 Modelo de Embedding:** text-embedding-ada-002")
-        st.write("**🔍 Algoritmo de Busca:** FAISS (Facebook AI Similarity Search)")
-        st.write("**📏 Dimensionalidade:** 1536 dimensões")
-        st.write("**⚡ Método de Similaridade:** Produto escalar normalizado (cosine similarity)")
-        
-        # Metodologia
-        st.subheader("📖 Metodologia da Análise Dual")
-        
-        st.write("""
-        **Como funciona a análise dual:**
-        
-        1. **Geração de Embedding:** O texto é convertido em um vetor de 1536 dimensões
-        
-        2. **Busca Dual:** O sistema busca os casos mais similares em ambas as bases:
-           - Base SRO: Casos que resultaram em reclamações
-           - Base SEM-SRO: Casos que NÃO resultaram em reclamações
-        
-        3. **Cálculo do Ratio:** Compara as similaridades máximas entre as duas bases
-        
-        4. **Análise de Sentimento:** Identifica palavras positivas, negativas e críticas
-        
-        5. **Score Final:** Combina similaridade, ratio e sentimento para o risco final
-        
-        **Fórmula Simplificada:**
-        ```
-        Risco Final = Similaridade_SRO × 100 + Ajuste_Comparativo + Ajuste_Sentimento
-        ```
-        """)
-        
-        # Benchmarks
-        st.subheader("🎯 Benchmarks de Performance")
-        
-        benchmark_data = pd.DataFrame({
-            'Métrica': ['Tempo de Busca (ms)', 'Precisão (%)', 'Recall (%)', 'F1-Score (%)'],
-            'SRO': [2.5, 89.2, 86.7, 87.9],
-            'SEM-SRO': [2.3, 91.5, 88.1, 89.8],
-            'Dual': [4.8, 92.8, 90.3, 91.5]
-        })
-        
-        st.dataframe(benchmark_data, use_container_width=True)
-        
-        st.info("💡 **Dica:** A análise dual oferece maior precisão ao considerar tanto casos positivos quanto negativos, resultando em predições mais confiáveis.")
+        if custom_text and st.button("🔍 Testar Customizado", key="test_custom"):
+            analyze_text(analyzer, custom_text, "Exemplo Customizado", custom_order or "TESTE_CUSTOM")
 
 if __name__ == "__main__":
     main()
