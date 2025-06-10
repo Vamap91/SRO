@@ -1,4 +1,4 @@
-import streamlit as st
+def analyze_with_gpt(self, text: str,import streamlit as st
 import pandas as pd
 import numpy as np
 import openai
@@ -247,12 +247,9 @@ class SROPromptAnalyzer:
         }
     
     def analyze_with_gpt(self, text: str, order_id: str = "N/A") -> Dict:
-        """Análise usando GPT com o prompt estruturado"""
+        """Análise usando GPT-4o com o prompt estruturado"""
         if not self.is_loaded:
             return {"error": "Sistema não carregado"}
-        
-        # Primeiro, fazer análise local
-        local_analysis = self.calculate_risk_score(text, order_id)
         
         # Prompt estruturado baseado no PDF
         prompt = f"""
@@ -275,41 +272,90 @@ PALAVRAS-CHAVE IMPORTANTES:
 - Sentimento Negativo: terrível, péssimo, frustrado, revoltado, absurdo
 - Sentimento Positivo (reduz risco): excelente, ótimo, agradecer, satisfeito
 
-Forneça sua análise no seguinte formato:
+IMPORTANTE: Responda APENAS com um número de 0 a 100 representando a porcentagem de risco, seguido de uma linha com a classificação (Baixo/Médio/Alto/Crítico), e depois uma explicação breve.
 
-- Pedido: {order_id}
-- Probabilidade de Reclamação: [Baixo/Médio/Alto/Crítico]
-- Porcentagem Estimada: [X%]
-- Fatores Críticos: [liste os principais fatores de risco identificados]
-- Conclusão: [análise detalhada e recomendação de ação]
+Exemplo de resposta:
+75
+Alto
+Cliente demonstra múltiplos contatos e frustração evidente.
 """
         
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
-                    {"role": "system", "content": "Você é um especialista em análise preditiva de reclamações de clientes."},
+                    {"role": "system", "content": "Você é um especialista em análise preditiva de reclamações de clientes. Seja preciso e objetivo."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=1000,
-                temperature=0.3
+                max_tokens=200,
+                temperature=0.1
             )
             
-            gpt_analysis = response.choices[0].message.content
+            gpt_response = response.choices[0].message.content.strip()
             
-            # Combinar análise local com GPT
+            # Extrair porcentagem e classificação do GPT
+            lines = gpt_response.split('\n')
+            try:
+                gpt_percentage = float(lines[0])
+                gpt_classification = lines[1] if len(lines) > 1 else "Indefinido"
+                gpt_explanation = lines[2] if len(lines) > 2 else "Análise não disponível"
+            except (ValueError, IndexError):
+                # Fallback para análise local se GPT falhar
+                local_analysis = self.calculate_risk_score(text, order_id)
+                return local_analysis
+            
+            # Usar resultado do GPT como principal
+            if gpt_percentage >= 86:
+                risk_level = "Crítico"
+                risk_color = "#FF0000"
+            elif gpt_percentage >= 61:
+                risk_level = "Alto"
+                risk_color = "#FF4B4B"
+            elif gpt_percentage >= 31:
+                risk_level = "Médio"
+                risk_color = "#FF8C00"
+            else:
+                risk_level = "Baixo"
+                risk_color = "#00C851"
+            
+            # Fazer análise local para breakdown detalhado
+            local_analysis = self.calculate_risk_score(text, order_id)
+            
+            # Identificar fatores críticos baseado na análise local
+            critical_factors = []
+            if local_analysis["factors"]["contacts"] >= 3:
+                critical_factors.append(f"{local_analysis['factors']['contacts']} contatos")
+            if any(word in text.lower() for word in self.legal_risk):
+                critical_factors.append("ameaça jurídica")
+            if any(word in text.lower() for word in self.technical_issues):
+                critical_factors.append("problemas técnicos")
+            if local_analysis["factors"]["waiting_score"] > 5:
+                critical_factors.append("atraso no atendimento")
+            
             return {
-                **local_analysis,
-                "gpt_analysis": gpt_analysis,
-                "method": "hybrid"
+                "order_id": order_id,
+                "risk_level": risk_level,
+                "percentage": gpt_percentage,
+                "risk_color": risk_color,
+                "factors": local_analysis["factors"],  # Manter breakdown local
+                "weighted_scores": local_analysis["weighted_scores"],
+                "critical_factors": critical_factors,
+                "total_score": gpt_percentage,
+                "gpt_analysis": gpt_response,
+                "gpt_percentage": gpt_percentage,
+                "gpt_classification": gpt_classification,
+                "gpt_explanation": gpt_explanation,
+                "method": "gpt_primary"
             }
             
         except Exception as e:
-            st.warning(f"Erro na análise GPT: {str(e)}")
+            st.warning(f"Erro na análise GPT-4o: {str(e)}")
+            # Fallback para análise local
+            local_analysis = self.calculate_risk_score(text, order_id)
             return {
                 **local_analysis,
-                "gpt_analysis": "Análise GPT não disponível",
-                "method": "local_only"
+                "gpt_analysis": f"Análise GPT-4o não disponível: {str(e)}",
+                "method": "local_fallback"
             }
 
 def extract_text_from_file(uploaded_file) -> str:
@@ -466,10 +512,23 @@ def analyze_text(analyzer: SROPromptAnalyzer, text: str, source_name: str, order
     # Análise GPT
     if "gpt_analysis" in result:
         st.subheader("🤖 Análise Detalhada (GPT-4o)")
+        
+        # Mostrar resultado estruturado se disponível
+        if result.get("method") == "gpt_primary":
+            col_gpt1, col_gpt2 = st.columns(2)
+            with col_gpt1:
+                st.metric("🎯 GPT-4o Score", f"{result.get('gpt_percentage', 0):.1f}%")
+            with col_gpt2:
+                st.metric("🏷️ GPT-4o Classificação", result.get('gpt_classification', 'N/A'))
+            
+            if result.get('gpt_explanation'):
+                st.info(f"**Explicação**: {result['gpt_explanation']}")
+        
+        # Análise completa
         st.text_area(
             "Análise completa:",
             result["gpt_analysis"],
-            height=200,
+            height=150,
             disabled=True
         )
     
@@ -508,7 +567,13 @@ def analyze_text(analyzer: SROPromptAnalyzer, text: str, source_name: str, order
             st.write(f"{weighted['failures']}/20")
             st.write(f"{weighted['emotion']}/10")
         
-        st.write(f"**Total: {result['total_score']}/100 = {result['percentage']:.1f}%**")
+        # Breakdown detalhado
+        st.write(f"**Total GPT-4o: {result['percentage']:.1f}% = {result['risk_level']}**")
+        
+        # Comparação com análise local se disponível
+        if result.get("method") == "gpt_primary":
+            local_score = sum(result["weighted_scores"].values())
+            st.write(f"*Comparação - Análise Local: {local_score:.1f}%*")
     
     # Recomendações baseadas no nível de risco
     st.subheader("💡 Recomendações de Ação")
