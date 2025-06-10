@@ -286,7 +286,7 @@ Forneça sua análise no seguinte formato:
         
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "Você é um especialista em análise preditiva de reclamações de clientes."},
                     {"role": "user", "content": prompt}
@@ -465,7 +465,7 @@ def analyze_text(analyzer: SROPromptAnalyzer, text: str, source_name: str, order
     
     # Análise GPT
     if "gpt_analysis" in result:
-        st.subheader("🤖 Análise Detalhada (GPT-4)")
+        st.subheader("🤖 Análise Detalhada (GPT-4o)")
         st.text_area(
             "Análise completa:",
             result["gpt_analysis"],
