@@ -42,8 +42,9 @@ class SROPromptAnalyzer:
         if not self.is_loaded:
             return {"error": "Sistema não carregado"}
         
-        # PROMPT EXATO BASEADO NO PDF ANEXADO
-        prompt = f"""Role and Objective (in English)
+        try:
+            # PROMPT EXATO BASEADO NO PDF ANEXADO
+            prompt = f"""Role and Objective (in English)
 You are a predictive quality analyst in an automotive service company.
 Your task is to analyze service records written in Brazilian Portuguese and 
 estimate the probability (0% to 100%) that a customer will file a formal complaint 
@@ -134,8 +135,7 @@ TEXTO PARA ANÁLISE:
 {text}
 
 Analise o texto acima seguindo EXATAMENTE a metodologia descrita e forneça a resposta no formato especificado."""
-        
-        try:
+            
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
@@ -148,36 +148,42 @@ Analise o texto acima seguindo EXATAMENTE a metodologia descrita e forneça a re
             
             gpt_response = response.choices[0].message.content.strip()
             
-            # Extrair informações da resposta estruturada
-            lines = gpt_response.split('\n')
-            
-            # Inicializar variáveis
-            pedido = order_id
+            # Inicializar variáveis com valores padrão
+            pedido = order_id if order_id != "N/A" else "Não informado"
             probabilidade = "Indefinido"
             porcentagem = 0.0
             fatores_criticos = []
-            conclusao = ""
+            conclusao = "Análise não disponível"
             
-            # Processar resposta linha por linha
-            for line in lines:
-                line = line.strip()
-                if line.startswith("- Pedido:"):
-                    pedido = line.replace("- Pedido:", "").strip()
-                elif line.startswith("- Probabilidade de Reclamação:"):
-                    probabilidade = line.replace("- Probabilidade de Reclamação:", "").strip()
-                elif line.startswith("- Porcentagem Estimada:"):
-                    porcentagem_text = line.replace("- Porcentagem Estimada:", "").strip().replace("%", "")
-                    try:
-                        porcentagem = float(porcentagem_text)
-                    except ValueError:
-                        porcentagem = 0.0
-                elif line.startswith("- Fatores Críticos:"):
-                    fatores_text = line.replace("- Fatores Críticos:", "").strip()
-                    fatores_criticos = [f.strip() for f in fatores_text.split(",") if f.strip()]
-                elif line.startswith("- Conclusão:"):
-                    conclusao = line.replace("- Conclusão:", "").strip()
+            # Processar resposta linha por linha de forma mais robusta
+            if gpt_response:
+                lines = gpt_response.split('\n')
+                
+                for line in lines:
+                    line = line.strip()
+                    
+                    if "pedido:" in line.lower():
+                        pedido = line.split(":", 1)[1].strip()
+                    elif "probabilidade de reclamação:" in line.lower():
+                        probabilidade = line.split(":", 1)[1].strip()
+                    elif "porcentagem estimada:" in line.lower():
+                        porcentagem_text = line.split(":", 1)[1].strip().replace("%", "").replace(",", ".")
+                        try:
+                            # Extrair apenas números da string
+                            import re
+                            numbers = re.findall(r'\d+\.?\d*', porcentagem_text)
+                            if numbers:
+                                porcentagem = float(numbers[0])
+                        except (ValueError, IndexError):
+                            porcentagem = 0.0
+                    elif "fatores críticos:" in line.lower():
+                        fatores_text = line.split(":", 1)[1].strip()
+                        if fatores_text and fatores_text.lower() != "nenhum":
+                            fatores_criticos = [f.strip() for f in fatores_text.split(",") if f.strip()]
+                    elif "conclusão:" in line.lower():
+                        conclusao = line.split(":", 1)[1].strip()
             
-            # Determinar cor baseado na porcentagem
+            # Determinar cor e nível baseado na porcentagem
             if porcentagem >= 86:
                 risk_color = "#FF0000"
                 risk_level = "Crítico"
@@ -200,12 +206,24 @@ Analise o texto acima seguindo EXATAMENTE a metodologia descrita e forneça a re
                 "conclusion": conclusao,
                 "gpt_analysis": gpt_response,
                 "method": "prompt_exato",
-                "prompt_version": "PDF_Anexado"
+                "prompt_version": "PDF_Anexado",
+                "success": True
             }
             
         except Exception as e:
             st.error(f"Erro na análise GPT-4o: {str(e)}")
-            return {"error": f"Falha na análise: {str(e)}"}
+            return {
+                "error": f"Falha na análise: {str(e)}",
+                "order_id": order_id,
+                "risk_level": "Erro",
+                "percentage": 0.0,
+                "risk_color": "#808080",
+                "critical_factors": [],
+                "conclusion": f"Erro durante a análise: {str(e)}",
+                "gpt_analysis": "Análise não executada devido a erro",
+                "method": "erro",
+                "success": False
+            }
 
 def extract_text_from_file(uploaded_file) -> str:
     """Extrai texto de arquivos uploaded"""
@@ -285,8 +303,9 @@ def analyze_text_with_exact_prompt(analyzer: SROPromptAnalyzer, text: str, sourc
     with st.spinner("🤖 Testando prompt EXATO do PDF anexado..."):
         result = analyzer.analyze_with_exact_prompt(text, order_id)
     
-    if "error" in result:
-        st.error(f"❌ {result['error']}")
+    # Verificar se houve erro
+    if not result.get("success", False):
+        st.error(f"❌ Erro na análise: {result.get('error', 'Erro desconhecido')}")
         return
     
     # Header com informações do teste
@@ -339,11 +358,11 @@ def analyze_text_with_exact_prompt(analyzer: SROPromptAnalyzer, text: str, sourc
     with col_check1:
         st.write("**✅ Elementos Obrigatórios Presentes:**")
         checks = [
-            ("Pedido identificado", bool(result.get("order_id"))),
-            ("Probabilidade classificada", bool(result.get("risk_level"))),
+            ("Pedido identificado", bool(result.get("order_id") and result["order_id"] != "Não informado")),
+            ("Probabilidade classificada", bool(result.get("risk_level") and result["risk_level"] != "Indefinido")),
             ("Porcentagem calculada", result.get("percentage", 0) > 0),
             ("Fatores críticos listados", bool(result.get("critical_factors"))),
-            ("Conclusão fornecida", bool(result.get("conclusion")))
+            ("Conclusão fornecida", bool(result.get("conclusion") and result["conclusion"] != "Análise não disponível"))
         ]
         
         for check_name, check_result in checks:
@@ -456,13 +475,6 @@ def main():
         st.write("• **Médio**: 31-60%") 
         st.write("• **Alto**: 61-85%")
         st.write("• **Crítico**: 86-100%")
-        
-        st.header("📋 Elementos Verificados")
-        st.write("✅ Pedido identificado")
-        st.write("✅ Probabilidade classificada")
-        st.write("✅ Porcentagem calculada")
-        st.write("✅ Fatores críticos listados")
-        st.write("✅ Conclusão fornecida")
     
     # Verificar pré-requisitos
     if not api_key:
