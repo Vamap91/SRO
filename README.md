@@ -1,124 +1,186 @@
-# Projeto SRO: Sistema de Previsão de Reclamações com IA e RAG
+# SRO Risk Analyzer - Sistema de Análise Preditiva de Reclamações
 
-## Descrição
+## 📋 Descrição
 
-O Sistema de Previsão de Reclamações (SRO) é uma aplicação web desenvolvida com Streamlit que utiliza técnicas avançadas de Inteligência Artificial, especificamente Retrieval Augmented Generation (RAG), para prever a probabilidade de reclamações formais com base em comentários de atendimento ao cliente.
+O **SRO Risk Analyzer** é uma aplicação web desenvolvida com Streamlit que utiliza Inteligência Artificial para prever a probabilidade de clientes formalizarem reclamações (SRO - Sistema de Registro de Ocorrências) com base em registros de atendimento.
 
-A aplicação analisa comentários de atendimento, compara-os com uma base histórica de 36 mil registros que resultaram em reclamações, e fornece uma análise preditiva detalhada sobre o risco de uma reclamação formal ser aberta, permitindo ações preventivas.
+O sistema implementa uma **metodologia estruturada de 4 fatores ponderados** para análise preditiva, combinando regras baseadas em palavras-chave com análise avançada usando GPT-4.
 
-## Tecnologias Utilizadas
+## 🎯 Funcionalidades Principais
 
-- **Streamlit**: Framework para interface web
-- **OpenAI API**: Modelos GPT-4 para análise e text-embedding-ada-002 para embeddings
-- **RAG (Retrieval Augmented Generation)**: Técnica que combina recuperação de informações com geração de texto
-- **FAISS**: Biblioteca para busca eficiente de similaridade vetorial
-- **LangChain**: Para processamento e chunking de texto
-- **Pandas/NumPy**: Para manipulação de dados
-- **PyMuPDF**: Para processamento de arquivos PDF
+### 📊 **Análise Preditiva Estruturada**
+- **4 Fatores Ponderados** conforme metodologia especializada
+- **Classificação de Risco**: Baixo, Médio, Alto, Crítico
+- **Score Percentual**: 0% a 100% de probabilidade de reclamação
+- **Análise Híbrida**: Combinação de regras locais + GPT-4
 
-## Como Configurar e Rodar
+### 📈 **Visualizações Interativas**
+- **Gauge de Risco**: Indicador visual do nível de risco
+- **Gráfico de Fatores**: Breakdown detalhado por categoria
+- **Métricas em Tempo Real**: Scores e classificações
 
-### Pré-requisitos
+### 🧪 **Sistema de Testes**
+- **Exemplos Pré-definidos**: Para cada nível de risco
+- **Testes Customizados**: Crie seus próprios exemplos
+- **Validação da Metodologia**: Teste e refine a análise
 
+## 🔬 Metodologia de Análise
+
+### **Fatores Ponderados:**
+
+1. **🔢 Frequência de Contatos (Peso 4)**
+   - 1 contato: risco baixo
+   - 2 contatos: risco médio
+   - 3+ contatos: risco elevado
+   - *Atenuação*: Palavras neutras reduzem o risco
+
+2. **⏰ Tempo de Espera (Peso 3)**
+   - Detecção de atrasos e urgência
+   - Padrões de insatisfação temporal
+   - Tolerâncias por tipo de serviço
+
+3. **⚙️ Falhas Operacionais (Peso 2)**
+   - **Indícios técnicos**: defeitos, vazamentos, quebras
+   - **Falhas de processo**: cadastro, comunicação, pós-serviço
+
+4. **😠 Estado Emocional (Peso 1)**
+   - **Negativos moderados**: frustrado, decepcionado (+1 ponto)
+   - **Risco jurídico**: Procon, processar, advogado (+3 pontos)
+   - **Positivos**: excelente, satisfeito (-1 ponto)
+
+### **Classificação de Risco:**
+- **Baixo**: 0-30%
+- **Médio**: 31-60%
+- **Alto**: 61-85%
+- **Crítico**: 86-100%
+
+## 🚀 Como Configurar e Executar
+
+### **Pré-requisitos**
 - Python 3.8 ou superior
-- Acesso à API da OpenAI
+- Conta OpenAI com API Key
 
-### Instalação
+### **Instalação**
 
-1. Clone o repositório:
-   ```
-   git clone https://github.com/seu-usuario/sro-previsao-reclamacoes.git
-   cd sro-previsao-reclamacoes
+1. **Clone o repositório:**
+   ```bash
+   git clone https://github.com/seu-usuario/sro-risk-analyzer.git
+   cd sro-risk-analyzer
    ```
 
-2. Instale as dependências:
-   ```
+2. **Instale as dependências:**
+   ```bash
    pip install -r requirements.txt
    ```
 
-3. Configure a chave da API OpenAI:
-   
+3. **Configure a API Key da OpenAI:**
+
    **Para Streamlit Cloud:**
-   - Acesse as configurações do seu aplicativo no Streamlit Cloud
-   - Vá para "Secrets"
-   - Adicione sua chave da API no formato:
-     ```
-     OPENAI_API_KEY = "sua-chave-aqui"
+   - Acesse Settings > Secrets no seu app
+   - Adicione:
+     ```toml
+     OPENAI_API_KEY = "sua-chave-openai-aqui"
      ```
 
    **Para execução local:**
-   - Crie um arquivo `.streamlit/secrets.toml` com o conteúdo:
-     ```
-     OPENAI_API_KEY = "sua-chave-aqui"
+   - Crie `.streamlit/secrets.toml`:
+     ```toml
+     OPENAI_API_KEY = "sua-chave-openai-aqui"
      ```
 
-4. Posicionamento do Arquivo Histórico:
-   - O arquivo `InformaçõesSRO.xlsx - Planila3.csv` deve estar no **mesmo diretório** do `streamlit_app.py`
-   - Este arquivo contém a base histórica de comentários que resultaram em reclamações
-
-5. Execute a aplicação:
-   ```
+4. **Execute a aplicação:**
+   ```bash
    streamlit run streamlit_app.py
    ```
 
-## Lógica RAG Explicada
+## 📁 Estrutura do Projeto
 
-O sistema utiliza a técnica RAG (Retrieval Augmented Generation) para melhorar significativamente a precisão das previsões:
+```
+sro-risk-analyzer/
+├── streamlit_app.py          # Aplicação principal
+├── requirements.txt          # Dependências Python
+├── README.md                # Documentação
+├── Dados_SRO.pkl           # Base histórica (para versão futura com embeddings)
+├── dados_semSRO.pkl        # Base complementar (reservado)
+└── .streamlit/
+    └── secrets.toml         # Configurações locais (não commitado)
+```
 
-1. **Processamento da Base Histórica**:
-   - Na primeira execução, o sistema carrega a base de 36 mil comentários históricos
-   - Cada comentário é dividido em chunks (pedaços) de 500 caracteres com 100 caracteres de sobreposição
-   - Para cada chunk, é gerado um embedding (representação vetorial) usando a API da OpenAI
-   - Os embeddings são indexados usando FAISS para permitir busca eficiente por similaridade
-   - O índice FAISS e os metadados dos chunks são salvos em disco para carregamento rápido em execuções futuras
+## 🎮 Como Usar
 
-2. **Análise de Novos Comentários**:
-   - Quando um novo comentário é enviado para análise, o sistema gera seu embedding
-   - Usando o índice FAISS, o sistema encontra os 3-5 comentários históricos mais similares
-   - Estes comentários similares, junto com o novo comentário, são enviados para o GPT-4
-   - O modelo considera fatores como frequência de contatos, tempo de espera, falhas processuais e estado emocional do cliente
-   - A análise também considera palavras-chave frequentemente associadas a reclamações
+### **1. 📤 Upload de Arquivo**
+- Formatos suportados: PDF, Excel, JSON, TXT
+- Extração automática de texto
+- Análise de documentos estruturados
 
-3. **Persistência e Performance**:
-   - Após a primeira execução (que pode levar alguns minutos), as execuções subsequentes são muito mais rápidas
-   - O sistema carrega o índice FAISS e os metadados diretamente do disco, evitando reprocessamento
-   - A função de carregamento é decorada com `@st.cache_resource` para otimizar o uso de memória
+### **2. ✍️ Texto Manual**
+- Cole diretamente registros de atendimento
+- Análise em tempo real
+- Ideal para testes rápidos
 
-## Uso da Aplicação
+### **3. 🧪 Exemplos de Teste**
+- **Exemplos pré-definidos** para cada nível de risco
+- **Testes customizados** para validar a metodologia
+- **Validação rápida** do sistema
 
-1. **Upload de Arquivo**:
-   - Faça upload de um arquivo Excel, CSV, PDF ou JSON contendo comentários de atendimento
-   - Para arquivos Excel/CSV, selecione as colunas que contêm o ID do pedido e o comentário
-   - Para PDFs e JSONs, o sistema tentará extrair automaticamente os comentários
+## 📊 Exemplo de Saída
 
-2. **Análise**:
-   - Clique no botão "Analisar Comentários" para iniciar o processamento
-   - O sistema processará cada comentário, encontrará exemplos históricos similares e gerará uma análise
+```
+- Pedido: ORD123456
+- Probabilidade de Reclamação: Crítica
+- Porcentagem Estimada: 92%
+- Fatores Críticos: 4 contatos, ameaça jurídica, problemas técnicos
+- Conclusão: Cliente demonstra alta insatisfação e ameaça jurídica. 
+  Recomendamos contato imediato com supervisor.
+```
 
-3. **Resultados**:
-   - Os resultados são exibidos em formato visual com código de cores por nível de risco
-   - Cada análise inclui:
-     - Probabilidade de reclamação (Baixa, Média, Alta, Crítica)
-     - Porcentagem específica de risco
-     - Fatores críticos identificados
-     - Conclusão com recomendação de ação preventiva
+## 🔮 Versões e Roadmap
 
-4. **Download**:
-   - Baixe um relatório Excel completo com todos os resultados para análise offline
+### **Versão Atual: 2.0 - Análise por Prompt**
+- ✅ Metodologia estruturada de 4 fatores
+- ✅ Análise híbrida (Local + GPT-4)
+- ✅ Interface completa com testes
+- ✅ Visualizações interativas
 
-## Formato de Entrada/Saída
+### **Versão Futura: 3.0 - RAG + Embeddings**
+- 🔄 Integração com base histórica (Dados_SRO.pkl)
+- 🔄 Busca por similaridade vetorial
+- 🔄 Comparação com casos históricos
+- 🔄 Análise ainda mais precisa
 
-### Entrada:
-- Arquivos Excel, CSV, PDF ou JSON contendo comentários de atendimento
-- Para Excel/CSV, o usuário pode selecionar as colunas relevantes
+## 🛠️ Tecnologias Utilizadas
 
-### Saída:
-- Análise visual na interface com código de cores por nível de risco
-- Relatório detalhado em formato Excel para download
-- Cada análise inclui probabilidade, porcentagem, fatores críticos e conclusão
+- **Frontend**: Streamlit
+- **IA**: OpenAI GPT-4 + text-embedding-ada-002
+- **Visualização**: Plotly
+- **Processamento**: Pandas, NumPy
+- **Documentos**: PyPDF2, openpyxl
 
-## Considerações de Performance
+## 📈 Performance e Limites
 
-- A primeira execução será mais lenta devido à necessidade de processar a base histórica completa
-- Execuções subsequentes serão significativamente mais rápidas graças ao carregamento do índice do disco
-- O sistema foi otimizado para lidar com a base de 36 mil registros, mas pode requerer mais memória para bases maiores
+- **Velocidade**: Análise em ~2-5 segundos
+- **Precisão**: Baseada em metodologia especializada
+- **Escalabilidade**: Suporta análise individual ou em lote
+- **Custo**: ~$0.01-0.03 por análise (via OpenAI API)
+
+## 🤝 Contribuições
+
+1. Faça fork do projeto
+2. Crie uma branch para sua feature
+3. Commit suas mudanças
+4. Push para a branch
+5. Abra um Pull Request
+
+## 📄 Licença
+
+Este projeto está licenciado sob a MIT License - veja o arquivo [LICENSE](LICENSE) para detalhes.
+
+## 📞 Suporte
+
+Para dúvidas, sugestões ou problemas:
+- Abra uma [Issue](https://github.com/seu-usuario/sro-risk-analyzer/issues)
+- Entre em contato via email: [seu-email@dominio.com]
+
+---
+
+**Desenvolvido com ❤️ para otimização de atendimento ao cliente e prevenção de reclamações**
